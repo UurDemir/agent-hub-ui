@@ -1,5 +1,9 @@
 # Agent Hub
 
+[![npm](https://img.shields.io/npm/v/agent-hub-ui)](https://www.npmjs.com/package/agent-hub-ui)
+[![CI](https://github.com/UurDemir/agent-hub-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/UurDemir/agent-hub-ui/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 A local web dashboard that shows every coding agent running on this PC and what each one is doing, live.
 
 ![The Canvas view: a Claude Code session as a glowing hexagon with its recent tool calls, latest message, cost and two finished subagents, next to a cost breakdown and a live timeline](docs/canvas.jpg)
@@ -56,3 +60,7 @@ From a clone, use `npm start` (or `npm run open` to also open the browser). Ther
 It reads only these files, never writes them, and never touches your credentials. The server listens on `127.0.0.1` only, because transcripts contain your code and prompts. Set `PORT` to change the port. Set `CLAUDE_CONFIG_DIR` if your Claude config lives somewhere else.
 
 To add another agent that keeps local logs, write a collector like `server/claude.js` that emits the same event shape (`prompt`, `say`, `tool`, `result`).
+
+## License
+
+[MIT](LICENSE) © Uğur Demir
