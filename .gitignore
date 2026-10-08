@@ -1,2 +1,4 @@
 ﻿node_modules/
 .playwright-mcp/
+.claude/settings.local.json
+.claude/*.local.md

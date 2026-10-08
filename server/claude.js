@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { Tail, Transcript, activity, clip } from './parse.js';
+import { Tail, Transcript, activity, clip, costRates, transcriptCost } from './parse.js';
 
 const ROOT = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const DIR = {
@@ -175,12 +175,14 @@ export class ClaudeCollector extends EventEmitter {
   snapshot() {
     // A resumed background job writes to a new transcript; its old one is named after the job id.
     const liveJobs = [...this.sessions.values()].filter((s) => s.live && s.info?.jobId).map((s) => s.info.jobId);
+    // Per-model rates are the same for every session, so any session's cost record prices all of them.
+    const rates = costRates([...this.sessions.values()].map((s) => s.tr.costState).filter(Boolean));
     return [...this.sessions.values()]
       .filter((s) => (s.file || s.live) && (s.live || !liveJobs.some((j) => s.sessionId.startsWith(j))))
-      .map((s) => this.summarize(s));
+      .map((s) => this.summarize(s, rates));
   }
 
-  summarize(s) {
+  summarize(s, rates = {}) {
     const { tr } = s;
     const info = s.info || {};
     let status;
@@ -213,6 +215,7 @@ export class ClaudeCollector extends EventEmitter {
       prs: tr.prs,
       todos: tr.todos,
       outTokens: tr.outTokens,
+      cost: transcriptCost(tr, rates),
       context: tr.context,
       toolCount: tr.toolCount,
       startedAt: info.startedAt || tr.firstAt,
@@ -227,18 +230,21 @@ export class ClaudeCollector extends EventEmitter {
         .sort((a, b) => b.tail.mtime - a.tail.mtime)
         .map((sub) => {
           const age = now - sub.tail.mtime;
-          const st = age < 15000 || (sub.tr.pending.size && status === 'working' && age < 600e3)
+          const finished = sub.tr.stopReason === 'end_turn' || sub.tr.handedBack;
+          const st = age < 15000 || (!finished && sub.tr.pending.size && status === 'working' && age < 600e3)
             ? 'working'
-            : sub.tr.stopReason === 'end_turn' ? 'done' : 'idle';
+            : finished ? 'done' : 'idle';
           return {
             key: `${s.sessionId}/${sub.agentId}`,
             agentId: sub.agentId,
             type: sub.meta.agentType || 'subagent',
             description: sub.meta.description || '',
+            toolUseId: sub.meta.toolUseId || null, // the parent's Agent tool call that spawned it
             status: st,
             now: activity(sub.tr, st),
             model: sub.tr.model,
             outTokens: sub.tr.outTokens,
+            cost: transcriptCost(sub.tr, rates),
             context: sub.tr.context,
             toolCount: sub.tr.toolCount,
             startedAt: sub.tr.firstAt,

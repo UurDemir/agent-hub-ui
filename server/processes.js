@@ -3,6 +3,7 @@
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
+import { redact } from './projects.js';
 
 const AGENTS = [
   { id: 'cursor', label: 'Cursor', match: (p) => p.name === 'cursor.exe' || p.name === 'cursor' },
@@ -81,7 +82,7 @@ export class ProcessScanner extends EventEmitter {
       g.pids.push(p.pid);
       g.memory += p.mem;
       if (p.start && (!g.startedAt || p.start < g.startedAt)) g.startedAt = p.start;
-      if (!g.cmd) g.cmd = (p.exe || p.cmd).slice(0, 200);
+      if (!g.cmd) g.cmd = redact(p.exe || p.cmd).slice(0, 200);
       groups.set(a.id, g);
     }
     return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));

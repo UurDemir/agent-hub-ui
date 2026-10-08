@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server/index.js",
-    "open": "node server/index.js --open"
+    "open": "node server/index.js --open",
+    "test": "node --test"
   }
 }

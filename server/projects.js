@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 
 const HOME = os.homedir();
 const ROOT = process.env.CLAUDE_CONFIG_DIR || path.join(HOME, '.claude');
@@ -33,14 +34,16 @@ function readText(f) {
 
 /* ---------- redaction ---------- */
 
-const SECRET_RE = /(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|xox[abprs]-[A-Za-z0-9-]{8,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_.-]+|AKIA[0-9A-Z]{16})/g;
+const SECRET_RE = /(sk-[A-Za-z0-9_-]{8,}|[sr]k_(?:live|test)_[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{8,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_.-]+|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})/g;
 const KV_SECRET_RE = /((?:api[_-]?key|token|secret|password|passwd)["']?\s*[=:]\s*["']?)[^\s"'&]+/gi;
 const URL_CRED_RE = /([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^@\s/]+@/gi;     // scheme://user:pass@
 const ENV_FLAG_RE = /((?:^|\s)(?:-e|--env)\s+[A-Za-z_][A-Za-z0-9_]*=)\S+/g; // docker -e NAME=value
+const SECRET_FLAG_RE = /((?:^|\s)--?(?:api[_-]?key|(?:access[_-]?|auth[_-]?)?token|secret|password|passwd)\s+)(?!-)\S+/gi; // --api-key value
 export const redact = (s) => String(s ?? '')
   .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 •••')
   .replace(URL_CRED_RE, '$1•••@')
   .replace(ENV_FLAG_RE, '$1•••')
+  .replace(SECRET_FLAG_RE, '$1•••')
   .replace(SECRET_RE, '•••')
   .replace(KV_SECRET_RE, '$1•••');
 function redactUrl(u) {
@@ -219,19 +222,32 @@ function mcpServers(obj, scope, source) {
 
 const usageCache = new Map(); // file -> { key, counts }
 
+const MAX_USAGE_SCAN = 256 * 1024 * 1024;
+
+// Caches the scan's promise, so concurrent requests share one pass over each file.
 function usageOf(file) {
   const st = statOf(file);
-  if (!st || st.size > 80 * 1024 * 1024) return null;
+  if (!st || st.size > MAX_USAGE_SCAN) return null;
   const key = `${st.size}:${st.mtimeMs}`;
   const hit = usageCache.get(file);
   if (hit?.key === key) return hit.counts;
-  const text = fs.readFileSync(file, 'utf8');
+  const counts = scanUsage(file);
+  usageCache.set(file, { key, counts });
+  return counts;
+}
+
+// Streams line by line so large transcripts neither load into memory nor block the event loop.
+async function scanUsage(file) {
   const counts = { agents: {}, skills: {}, commands: {} };
   const bump = (m, k) => { m[k] = (m[k] || 0) + 1; };
-  for (const m of text.matchAll(/"subagent_type":"([^"]+)"/g)) bump(counts.agents, m[1]);
-  for (const m of text.matchAll(/"name":"Skill","input":\{[^}]*?"skill":"([^"]+)"/g)) bump(counts.skills, m[1]);
-  for (const m of text.matchAll(/<command-name>\/?([^<]+)<\/command-name>/g)) bump(counts.commands, '/' + m[1].trim());
-  usageCache.set(file, { key, counts });
+  try {
+    const lines = readline.createInterface({ input: fs.createReadStream(file, 'utf8'), crlfDelay: Infinity });
+    for await (const line of lines) {
+      for (const m of line.matchAll(/"subagent_type":"([^"]+)"/g)) bump(counts.agents, m[1]);
+      for (const m of line.matchAll(/"name":"Skill","input":\{[^}]*?"skill":"([^"]+)"/g)) bump(counts.skills, m[1]);
+      for (const m of line.matchAll(/<command-name>\/?([^<]+)<\/command-name>/g)) bump(counts.commands, '/' + m[1].trim());
+    }
+  } catch { return null; } // vanished or unreadable
   return counts;
 }
 
@@ -243,11 +259,11 @@ function transcriptsOf(id) {
   return { main, subs };
 }
 
-function usageFor(id) {
+async function usageFor(id) {
   const total = { agents: {}, skills: {}, commands: {} };
   const { main, subs } = transcriptsOf(id);
   for (const f of [...main, ...subs]) {
-    const c = usageOf(f);
+    const c = await usageOf(f);
     if (!c) continue;
     for (const k of Object.keys(total)) for (const [n, v] of Object.entries(c[k])) total[k][n] = (total[k][n] || 0) + v;
   }
@@ -437,7 +453,7 @@ export class ProjectCatalog {
     return { user: { id: 'user', name: 'Your global setup', path: ROOT, counts: this.counts(u) }, projects };
   }
 
-  detail(id) {
+  async detail(id) {
     const { cj, map } = this.discover();
     if (id === 'user') {
       const c = this.userConfig(cj);
@@ -456,7 +472,7 @@ export class ProjectCatalog {
       inherited: { agents: u.agents.length, skills: u.skills.length, commands: u.commands.length, mcp: u.mcp.length, hooks: u.hooks.length, plugins: u.plugins.filter((p) => p.enabled).length },
       sessions: this.sessionsOf(id),
       live: this.liveFor(entry.path),
-      usage: usageFor(id),
+      usage: await usageFor(id),
       stats: {
         lastCost: cfg.lastCost ?? null, lastDuration: cfg.lastDuration ?? null,
         linesAdded: cfg.lastLinesAdded ?? null, linesRemoved: cfg.lastLinesRemoved ?? null,

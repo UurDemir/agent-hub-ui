@@ -182,7 +182,7 @@ function itemHTML(it, { chips = [], open = false } = {}) {
     </details>`;
 }
 
-const chip = (text, cls = '') => `<span class="ichip ${cls}">${esc(text)}</span>`;
+const chip = (text, cls = '') => `<span class="ichip ${esc(cls)}">${esc(text)}</span>`;
 
 function listSection(items, opts, emptyText) {
   if (!items.length) return `<div class="pj-empty">${emptyText}</div>`;
@@ -246,7 +246,7 @@ function sectionHTML(d, tab) {
       return `<table class="tbl">
         <tr><th>Event</th><th>Matcher</th><th>Runs</th><th>Defined in</th></tr>
         ${c.hooks.map((h) => `<tr><td>${chip(h.event, 'used')}</td><td><code>${esc(h.matcher)}</code></td>
-          <td><code class="wrap">${esc(h.command)}</code>${h.timeout ? `<div class="dimtxt">timeout ${h.timeout}s</div>` : ''}</td>
+          <td><code class="wrap">${esc(h.command)}</code>${h.timeout ? `<div class="dimtxt">timeout ${esc(h.timeout)}s</div>` : ''}</td>
           <td class="dimtxt">${esc(h.source)}</td></tr>`).join('')}
       </table>`;
     case 'permissions': {
@@ -403,6 +403,7 @@ async function showProject(id, tab) {
 function currentRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (parts[0] === 'projects') return { view: 'projects', id: parts[1] || null, tab: parts[2] || 'overview' };
+  if (parts[0] === 'canvas') return { view: 'canvas', project: parts[1] || null };
   return { view: 'live', key: parts[0] === 'live' ? parts.slice(1).join('/') : null };
 }
 
@@ -410,10 +411,13 @@ function route() {
   const r = currentRoute();
   $('#view-live').hidden = r.view !== 'live';
   $('#view-projects').hidden = r.view !== 'projects';
+  $('#view-canvas').hidden = r.view !== 'canvas';
   for (const a of document.querySelectorAll('#tabs a')) a.classList.toggle('on', a.dataset.view === r.view);
   if (r.view === 'projects') {
     window.scrollTo(0, 0);
     if (r.id) showProject(r.id, r.tab); else showProjectList();
+  } else if (r.view === 'canvas') {
+    showCanvas(r.project);
   } else if (r.key) {
     state.selected = r.key;
     store.set('sel', r.key);

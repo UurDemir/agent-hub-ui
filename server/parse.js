@@ -57,12 +57,13 @@ export class Tail {
 }
 
 const CATEGORY = {
-  Read: 'read', Grep: 'read', Glob: 'read', LS: 'read', LSP: 'read', NotebookRead: 'read',
+  Read: 'read', Grep: 'read', Glob: 'read', LS: 'read', LSP: 'read', NotebookRead: 'read', ToolSearch: 'read',
   Edit: 'edit', Write: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit',
   Bash: 'run', PowerShell: 'run', Monitor: 'run', BashOutput: 'run', KillShell: 'run', TaskStop: 'run',
   WebFetch: 'web', WebSearch: 'web',
-  Agent: 'agent', Task: 'agent', SendMessage: 'agent', ListAgents: 'agent',
-  TodoWrite: 'plan', EnterPlanMode: 'plan', ExitPlanMode: 'plan', Skill: 'plan',
+  Agent: 'agent', Task: 'agent', SendMessage: 'agent', ListAgents: 'agent', SubagentHandback: 'agent',
+  TodoWrite: 'plan', EnterPlanMode: 'plan', ExitPlanMode: 'plan', Skill: 'plan', StructuredOutput: 'plan',
+  TaskCreate: 'plan', TaskUpdate: 'plan', TaskList: 'plan', TaskGet: 'plan',
   AskUserQuestion: 'ask',
 };
 
@@ -92,6 +93,8 @@ function toolSummary(name, input) {
     case 'TodoWrite': return `${(input.todos || []).length} todos`;
     case 'Skill': return input.skill;
     case 'SendMessage': return `→ ${input.to || ''}`;
+    case 'SubagentHandback': return 'Final report';
+    case 'StructuredOutput': return 'Structured result';
   }
   const v = Object.values(input).find((x) => typeof x === 'string');
   return firstLine(v);
@@ -122,7 +125,8 @@ export class Transcript {
   constructor() {
     this.events = [];
     this.pending = new Map(); // tool_use id -> tool event still waiting for a result
-    this.seenMsg = new Set();
+    this.usage = new Map(); // API message id -> { model, in, out, cw, cr } (largest values seen)
+    this.costState = null;  // latest cost-state record: Claude Code's own per-model cost accounting
     this.seq = 0;
     this.outTokens = 0;
     this.context = 0;
@@ -138,6 +142,7 @@ export class Transcript {
     this.lastSay = null;
     this.phase = null; // { kind: thinking|writing|tool|result|done, t }
     this.stopReason = null;
+    this.handedBack = false; // a subagent delivered its final report (SubagentHandback)
     this.firstAt = 0;
     this.lastAt = 0;
   }
@@ -152,6 +157,7 @@ export class Transcript {
       case 'ai-title': this.title = j.aiTitle || this.title; break;
       case 'agent-name': this.agentName = j.agentName || this.agentName; break;
       case 'last-prompt': this.lastPrompt = clip(j.lastPrompt, 300); break;
+      case 'cost-state': this.costState = { total: j.totalCostUSD, models: j.modelUsage || {} }; break;
       case 'pr-link':
         if (j.prUrl && !this.prs.some((p) => p.url === j.prUrl)) {
           this.prs.push({ url: j.prUrl, number: j.prNumber, repo: j.prRepository });
@@ -160,6 +166,7 @@ export class Transcript {
         break;
       case 'system':
         if (j.subtype === 'compact_boundary') out.push({ kind: 'note', text: 'Context compacted' });
+        else if (j.subtype === 'turn_duration') { this.pending.clear(); this.phase = { kind: 'done', t }; }
         break;
       case 'assistant': this.assistant(j, t, out); break;
       case 'user': this.user(j, t, out); break;
@@ -180,12 +187,29 @@ export class Transcript {
 
   assistant(j, t, out) {
     const m = j.message || {};
+    // Failed API calls (rate limits, overload) are written as synthetic replies that end the turn.
+    if (j.isApiErrorMessage) {
+      const text = (Array.isArray(m.content) ? m.content : []).find((c) => c.type === 'text')?.text;
+      out.push({ kind: 'note', text: clip(text?.trim() || `API error ${j.apiErrorStatus || ''}`.trim(), 300) });
+      this.pending.clear();
+      this.phase = { kind: 'done', t };
+      return;
+    }
     if (m.model && !m.model.startsWith('<')) this.model = m.model;
     const u = m.usage;
     if (u) {
-      if (m.id && !this.seenMsg.has(m.id)) {
-        this.seenMsg.add(m.id);
-        this.outTokens += u.output_tokens || 0;
+      // A message's usage can repeat across its content-block records; keep the largest counts once.
+      if (m.id) {
+        const prev = this.usage.get(m.id) || { model: this.model, in: 0, out: 0, cw: 0, cr: 0 };
+        const next = {
+          model: this.model,
+          in: Math.max(prev.in, u.input_tokens || 0),
+          out: Math.max(prev.out, u.output_tokens || 0),
+          cw: Math.max(prev.cw, u.cache_creation_input_tokens || 0),
+          cr: Math.max(prev.cr, u.cache_read_input_tokens || 0),
+        };
+        this.outTokens += next.out - prev.out;
+        this.usage.set(m.id, next);
       }
       this.context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     }
@@ -207,6 +231,7 @@ export class Transcript {
         };
         this.pending.set(c.id, { ...e, t });
         this.toolCount++;
+        if (c.name === 'SubagentHandback') this.handedBack = true;
         if (c.name === 'TodoWrite' && Array.isArray(input.todos)) {
           this.todos = input.todos.map((x) => ({ content: clip(x.content, 200), status: x.status }));
         }
@@ -240,7 +265,7 @@ export class Transcript {
   }
 
   prompt(text, j, t, out) {
-    if (j.isMeta || !text) return;
+    if (j.isMeta || j.isCompactSummary || j.isVisibleInTranscriptOnly || !text) return;
     text = text.trim();
     if (text.startsWith('[Request interrupted')) {
       this.pending.clear();
@@ -264,6 +289,39 @@ export class Transcript {
     this.phase = { kind: 'prompt', t };
     out.push({ kind: 'prompt', text: clip(text, 1500) });
   }
+}
+
+/* ---------- cost ---------- */
+
+// Relative price of each token kind; the same ratios hold across Claude models.
+const weight = (inp, out, cw, cr) => inp + 5 * out + 1.25 * cw + 0.1 * cr;
+
+// USD per weighted token for each model, derived from Claude Code's own cost-state records
+// (which carry real per-model tokens and cost), so no prices are hard-coded here.
+export function costRates(costStates) {
+  const rates = {};
+  for (const cs of costStates) {
+    for (const [model, m] of Object.entries(cs?.models || {})) {
+      const w = weight(m.inputTokens || 0, m.outputTokens || 0, m.cacheCreationInputTokens || 0, m.cacheReadInputTokens || 0);
+      if (w > 0 && m.costUSD > 0) rates[model] = m.costUSD / w;
+    }
+  }
+  return rates;
+}
+
+const rateFor = (rates, model) => rates[model] ?? Object.entries(rates).find(([k]) => model.startsWith(k) || k.startsWith(model))?.[1];
+
+// Estimated USD spent by one transcript, or null if no rate is known for any of its models.
+export function transcriptCost(tr, rates) {
+  let sum = 0;
+  let priced = false;
+  for (const u of tr.usage.values()) {
+    const rate = u.model ? rateFor(rates, u.model) : undefined;
+    if (rate === undefined) continue;
+    sum += weight(u.in, u.out, u.cw, u.cr) * rate;
+    priced = true;
+  }
+  return priced ? sum : null;
 }
 
 // One-line "what is it doing right now" for a transcript, given its status.

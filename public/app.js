@@ -368,7 +368,7 @@ function detailHeadHTML(a) {
   if (!isSub && a.job && (a.job.detail || a.job.fan?.length)) {
     html += `<div class="d-section"><h4>Background job · ${esc(a.job.state || '')}</h4>
       ${a.job.detail ? `<div style="font-size:13px">${esc(a.job.detail)}</div>` : ''}
-      ${a.job.fan?.length ? `<div class="bg-tasks" style="margin-top:6px">${a.job.fan.map((f) => `<div title="${esc(f.label)}">▸ ${esc(f.kind)}: ${esc(f.label)} · <span data-since="${f.startedAt}"></span></div>`).join('')}</div>` : ''}
+      ${a.job.fan?.length ? `<div class="bg-tasks" style="margin-top:6px">${a.job.fan.map((f) => `<div title="${esc(f.label)}">▸ ${esc(f.kind)}: ${esc(f.label)} · <span data-since="${Number(f.startedAt) || 0}"></span></div>`).join('')}</div>` : ''}
     </div>`;
   }
   if (!isSub && a.todos?.length) {
@@ -481,6 +481,7 @@ function renderAll() {
   renderCards();
   renderLanes();
   renderDetail();
+  renderCanvas();
   updateTimers();
 }
 
@@ -501,8 +502,9 @@ function connect() {
     addEvents(key, events);
     if (key === state.selected) renderFeed();
     pulse(key);
+    canvasActivity(key);
   });
-  es.addEventListener('others', (m) => { state.others = JSON.parse(m.data); renderOthers(); renderCounters(); updateTimers(); });
+  es.addEventListener('others', (m) => { state.others = JSON.parse(m.data); renderOthers(); renderCounters(); renderCanvas(); updateTimers(); });
   es.onopen = () => setConn(true);
   es.onerror = () => setConn(false);
 }
