@@ -1,5 +1,7 @@
-# Publishes to npm when a GitHub release is published.
-# Needs an npm automation token saved as the repository secret NPM_TOKEN.
+# Publishes to npm when a GitHub release is published, using npm trusted publishing:
+# npm trusts this workflow through GitHub's OIDC identity, so no token or 2FA prompt is
+# needed, and provenance is attached automatically. Configured on npmjs.com under
+# agent-hub-ui → Settings → Trusted Publisher (repo UurDemir/agent-hub-ui, workflow publish.yml).
 name: Publish
 
 on:
@@ -11,16 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # for npm provenance
+      id-token: write # lets npm verify this workflow's identity
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships with npm 10.
+      - run: npm install -g npm@latest
       - run: npm test
       - name: Check the release tag matches package.json
         run: test "v$(node -p "require('./package.json').version")" = "${{ github.event.release.tag_name }}"
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish
