@@ -2,6 +2,8 @@
 
 A local web dashboard that shows every coding agent running on this PC and what each one is doing, live.
 
+![The Canvas view: a Claude Code session as a glowing hexagon with its recent tool calls, latest message, cost and two finished subagents, next to a cost breakdown and a live timeline](docs/canvas.jpg)
+
 ```
 npm start          # http://127.0.0.1:4317
 npm run open       # same, and opens the browser

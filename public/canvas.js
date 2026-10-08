@@ -34,7 +34,7 @@ const AGENT_LINGER_MS = 90e3; // how long an ended session or finished subagent 
 const AGENT_FADE_MS = 30e3;   // …fading out over the last part of that time
 const BUBBLE_MS = 90e3;       // how long Claude's last message stays as a bubble
 const MAX_SPAN_MS = 3 * 3600e3;
-const MAIN_SLOTS = [180, 222, 138]; // where a main agent's tool calls sit, in degrees (y points down)
+const MAIN_SLOTS = [180, 215, 145]; // where a main agent's tool calls sit, in degrees (y points down)
 const SUBS_PER_ROW = 6;
 const SUB_GAP_X = 360;
 const SUB_GAP_Y = 560;
@@ -179,7 +179,7 @@ function buildModel() {
         boxes.push({ ...b, node: nd, x: nd.x, y: nd.y + nd.r + 132 + i * 64 });
       } else {
         const ang = (MAIN_SLOTS[i % MAIN_SLOTS.length] * Math.PI) / 180;
-        boxes.push({ ...b, node: nd, x: nd.x + Math.cos(ang) * 290, y: nd.y + Math.sin(ang) * 150 + (i >= MAIN_SLOTS.length ? 64 : 0) });
+        boxes.push({ ...b, node: nd, x: nd.x + Math.cos(ang) * 330, y: nd.y + Math.sin(ang) * 150 + (i >= MAIN_SLOTS.length ? 64 : 0) });
       }
     });
     const msg = lastMessage(nd.key, T);
@@ -448,11 +448,12 @@ function fitTarget() {
   if (!m?.nodes.length || !stage) return null;
   let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
   for (const nd of m.nodes) {
-    x0 = Math.min(x0, nd.x - (nd.isSub ? 190 : 470));
+    x0 = Math.min(x0, nd.x - (nd.isSub ? 190 : 510));
     x1 = Math.max(x1, nd.x + (nd.isSub ? 190 : 480));
     y0 = Math.min(y0, nd.y - (nd.isSub ? 90 : 300));
     y1 = Math.max(y1, nd.y + (nd.isSub ? 420 : 260));
   }
+  for (const row of m.rows) { x0 = Math.min(x0, row.x - 20); y0 = Math.min(y0, row.y - 40); }
   // Fit into the area not covered by the side panel and the timeline.
   const panelW = FL.panel && stage.clientWidth > 900 ? 360 : 0;
   const W = stage.clientWidth - panelW;
