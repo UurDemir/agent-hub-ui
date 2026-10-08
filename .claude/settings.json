@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/test-on-stop.mjs\"",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/run-tests-on-stop.mjs\"",
             "timeout": 120,
             "statusMessage": "Running tests"
           }
