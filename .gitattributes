@@ -1,0 +1,5 @@
+# Keep LF everywhere: the CLI's "#!/usr/bin/env node" line breaks on macOS/Linux with CRLF,
+# and a package published from Windows ships whatever endings the working tree has.
+* text=auto eol=lf
+*.jpg binary
+*.png binary

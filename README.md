@@ -4,12 +4,26 @@ A local web dashboard that shows every coding agent running on this PC and what 
 
 ![The Canvas view: a Claude Code session as a glowing hexagon with its recent tool calls, latest message, cost and two finished subagents, next to a cost breakdown and a live timeline](docs/canvas.jpg)
 
+## Run it
+
+No clone needed. With Node 20 or newer:
+
 ```
-npm start          # http://127.0.0.1:4317
-npm run open       # same, and opens the browser
+npx agent-hub-ui                      # from npm
+npx github:UurDemir/agent-hub-ui      # or straight from GitHub
 ```
 
-Needs Node 18+. It has no dependencies, so you don't need `npm install`.
+It starts on http://127.0.0.1:4317 and opens your browser. Stop it with Ctrl+C.
+
+| Option | |
+|---|---|
+| `--port <port>` | Use another port (default 4317) |
+| `--no-open` | Don't open the browser |
+| `--host <host>` | Address to bind (default `127.0.0.1`; keep it local, transcripts contain your code) |
+
+To keep it around, install it globally with `npm install -g agent-hub-ui` and run `agent-hub`.
+
+From a clone, use `npm start` (or `npm run open` to also open the browser). There are no dependencies, so there's nothing to `npm install`.
 
 ## What it shows
 

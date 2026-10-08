@@ -106,12 +106,19 @@ const server = http.createServer((req, res) => {
   }
 });
 
-claude.start();
-procs.start();
+const url = `http://${HOST === '0.0.0.0' ? 'localhost' : HOST.includes(':') ? `[${HOST}]` : HOST}:${PORT}`;
+
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') console.error(`Port ${PORT} is already in use. Agent Hub may already be running at ${url}; otherwise pick another port with --port.`);
+  else console.error(`Agent Hub could not start: ${e.message}`);
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
-  const url = `http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`;
-  console.log(`Agent Hub running at ${url}`);
-  if (process.argv.includes('--open')) {
+  claude.start();
+  procs.start();
+  console.log(`Agent Hub running at ${url}  (Ctrl+C to stop)`);
+  if (process.argv.includes('--open') || process.env.AGENT_HUB_OPEN === '1') {
     if (process.platform === 'win32') execFile('cmd', ['/c', 'start', '', url]);
     else execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [url]);
   }

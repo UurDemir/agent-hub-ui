@@ -1,15 +1,40 @@
 {
   "name": "agent-hub-ui",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
   "description": "Local web dashboard that monitors the coding agents running on this PC and shows what they are doing, live.",
   "type": "module",
+  "bin": {
+    "agent-hub-ui": "bin/agent-hub.js",
+    "agent-hub": "bin/agent-hub.js"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "public/"
+  ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "start": "node server/index.js",
     "open": "node server/index.js --open",
     "test": "node --test"
+  },
+  "keywords": [
+    "claude-code",
+    "claude",
+    "ai-agents",
+    "coding-agents",
+    "dashboard",
+    "monitoring",
+    "subagents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UurDemir/agent-hub-ui.git"
+  },
+  "homepage": "https://github.com/UurDemir/agent-hub-ui#readme",
+  "bugs": {
+    "url": "https://github.com/UurDemir/agent-hub-ui/issues"
   }
 }
