@@ -30,8 +30,50 @@ const state = {
   notify: store.get('notify', '0') === '1' && 'Notification' in window && Notification.permission === 'granted',
   laneKeys: '',
   detailKey: null,
-  sendToken: null,           // set when the server runs with --allow-send
+  sendEpoch: null,           // id of the server run when it was started with --allow-send, else null
+  sendToken: null,           // this tab's send token, once unlocked
+  unlockError: '',
 };
+
+// --allow-send: the CLI opens (or prints) a one-use link with #send=<code>. Take the code out of the
+// address bar before the router sees it; the tab trades it for its own token once connected.
+// The token lives in sessionStorage, so it survives reloads of this tab only.
+let unlockCode = null;
+function takeUnlockCode() {
+  const code = location.hash.match(/^#send=([0-9a-f]{64})$/)?.[1];
+  if (!code) return false;
+  unlockCode = code;
+  history.replaceState(null, '', location.pathname + location.search + '#/');
+  return true;
+}
+takeUnlockCode();
+// A link pasted into an open dashboard tab only changes the hash. This listener runs before the
+// router's (projects.js loads later), so the router then sees the cleaned-up '#/'.
+window.addEventListener('hashchange', () => {
+  if (takeUnlockCode() && state.sendEpoch && !state.sendToken) unlockSending();
+});
+const tabSend = {
+  get: () => { try { return JSON.parse(sessionStorage.getItem('hub.send')); } catch { return null; } },
+  set: (v) => { try { sessionStorage.setItem('hub.send', JSON.stringify(v)); } catch { /* storage unavailable */ } },
+};
+
+async function unlockSending() {
+  const code = unlockCode;
+  unlockCode = null;
+  try {
+    const r = await fetch('/api/send/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    tabSend.set({ token: d.token, epoch: d.epoch });
+    state.sendToken = d.epoch === state.sendEpoch ? d.token : null;
+    state.unlockError = '';
+  } catch (e) {
+    state.unlockError = e.message;
+  }
+  for (const host of document.querySelectorAll('#compose, #fl-compose')) delete host.dataset.sig;
+  renderDetail();
+  renderCanvas();
+}
 
 const $ = (s) => document.querySelector(s);
 // Who wrote a prompt: you, you through Agent Hub's message box, another session, or a subagent's task.
@@ -443,8 +485,8 @@ function renderDetail() {
 // Message box for agent `a` (or none) in `host`; used by the detail panel and the canvas chat panel.
 // Rebuilt only when the agent or what it shows changes, so a half-typed message survives updates.
 function renderCompose(host, a) {
-  const mode = !a || a.parent || !a.canMessage ? 'none' : state.sendToken ? 'form' : 'hint';
-  const sig = `${mode}:${a?.key || ''}`;
+  const mode = !a || a.parent || !a.canMessage ? 'none' : state.sendToken ? 'form' : state.sendEpoch ? 'locked' : 'off';
+  const sig = `${mode}:${a?.key || ''}:${state.unlockError}`;
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
   host.dataset.key = a?.key || '';
@@ -454,9 +496,13 @@ function renderCompose(host, a) {
         <textarea rows="2" maxlength="20000" placeholder="Message this session… (Enter to send, Shift+Enter for a new line)"></textarea>
         <div class="compose-row"><span class="compose-msg"></span><button class="btn" type="submit">Send</button></div>
       </form>`
-    : mode === 'hint'
+    : mode === 'off'
       ? '<div class="compose-msg">To message this session from here, start Agent Hub with <code>--allow-send</code>.</div>'
-      : '';
+      : mode === 'locked'
+        ? `<div class="compose-msg ${state.unlockError ? 'err' : ''}">${state.unlockError
+          ? esc(state.unlockError)
+          : 'Messaging is on, but not in this tab. Open the one-use link Agent Hub printed in its terminal.'}</div>`
+        : '';
 }
 
 async function sendMessage(form) {
@@ -543,7 +589,10 @@ function connect() {
     state.events.clear(); state.seen.clear(); state.tools.clear();
     for (const [k, evs] of Object.entries(d.events)) addEvents(k, evs);
     state.others = d.others || [];
-    state.sendToken = d.sendToken || null;
+    state.sendEpoch = d.send || null;
+    const saved = tabSend.get();
+    state.sendToken = state.sendEpoch && saved?.epoch === state.sendEpoch ? saved.token : null;
+    if (unlockCode && state.sendEpoch && !state.sendToken) unlockSending();
     for (const host of document.querySelectorAll('#compose, #fl-compose')) delete host.dataset.sig;
     renderOthers();
     setConn(true, d.host);

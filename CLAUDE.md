@@ -31,7 +31,7 @@ curl http://127.0.0.1:4399/api/projects/user   # global ~/.claude setup
 ## Project constraints
 
 - **Zero dependencies.** Server uses only `node:` built-ins (ESM, `"type": "module"`); frontend is plain browser JS with no bundler or framework.
-- **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders. The one way it acts on sessions is the opt-in `--allow-send` messaging (below). Keep that feature behind the flag, the per-start `SEND_TOKEN`, the Origin check, the anti-framing headers and the loopback-only rule in `server/index.js`. These checks stop browsers only. Any local process can read the token from `/api/stream`, and the README says so.
+- **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders. The one way it acts on sessions is the opt-in `--allow-send` messaging (below). Keep that feature behind the flag, the one-use unlock codes and per-tab tokens, the Origin check, the anti-framing headers and the loopback-only rule in `server/index.js`. Never put a send token or unlock code in anything a GET returns (`/api/stream`, `/api/agents`): that would hand it to every local process.
 - **Local-only.** It binds to `127.0.0.1` because transcripts contain code and prompts. Don't change the default host. `hostAllowed()` in `server/index.js` rejects requests whose `Host` header isn't the loopback address (DNS-rebinding protection); keep it in front of every new route.
 - **Secrets stay hidden.** Anything that surfaces MCP commands, hook commands, env vars, headers or URLs goes through `redact()` / `redactUrl()` in `server/projects.js`; only env/header *names* are sent, never values.
 - **Path access is limited to known projects.** `/api/projects/<id>` only reads projects found in `~/.claude.json` or `~/.claude/projects/`; static serving rejects paths outside `public/`.
@@ -53,7 +53,7 @@ curl http://127.0.0.1:4399/api/projects/user   # global ~/.claude setup
 2. **`ProcessScanner`** (`server/processes.js`) — every 10s lists OS processes (PowerShell `Get-CimInstance` on Windows, `ps` elsewhere) and matches them against the `AGENTS` table to detect other AI tools. Presence/memory/uptime only.
 3. **`ProjectCatalog`** (`server/projects.js`) — on-demand (not streamed). Discovers projects and reads their Claude setup: CLAUDE.md, rules, agents, skills, commands, `.mcp.json`, settings/hooks/permissions, auto-memory, sessions, plugins. Usage counts come from regex scans over transcripts, cached by `size:mtime`.
 
-Endpoints: `GET /api/stream` (SSE: `init` with full snapshot + last 200 events per key, then `agents`, `events`, `others`), `GET /api/agents`, `GET /api/projects`, `GET /api/projects/<id>` (`user` = global `~/.claude` setup), `POST /api/send` (`{key, text}`; only with `--allow-send`). The `agents` event is only broadcast when the JSON snapshot changes.
+Endpoints: `GET /api/stream` (SSE: `init` with full snapshot + last 200 events per key, then `agents`, `events`, `others`), `GET /api/agents`, `GET /api/projects`, `GET /api/projects/<id>` (`user` = global `~/.claude` setup), `POST /api/send/unlock` (`{code}` → `{token, epoch}`) and `POST /api/send` (`{key, text}` + `X-Agent-Hub-Token`), both only with `--allow-send`. The `agents` event is only broadcast when the JSON snapshot changes.
 
 ### Messaging sessions (`server/messaging.js`)
 
@@ -63,7 +63,13 @@ With `--allow-send` (env `AGENT_HUB_ALLOW_SEND=1`), `/api/send` delivers text to
 - Frames are newline-delimited JSON: `{"type":"auth","token"}`, then `{"type":"user","session_id","uuid","from":"agent-hub","message":{"role":"user","content"}}`. Claude Code drops a frame whose `session_id` doesn't match the session.
 - The session receives it as a meta "message from another session". The transcript records it as an `attachment` of type `queued_command` with `origin: {kind: "peer", from}`. `parse.js` turns that into a `prompt` event with `from`, which the UI labels `YOU · HUB` or `SESSION`.
 
-`canMessage` on an agent summary means the session is live and has a socket. The page gets the send token in the SSE `init` payload (`sendToken`, `null` when sending is off).
+`canMessage` on an agent summary means the session is live and has a socket. How a tab gets a token:
+- At startup the server makes a one-use unlock code. The CLI opens it as `<url>/#send=<code>`; with `--no-open` it prints it.
+- `app.js` takes the code out of the hash, both on load and on `hashchange` (its listener runs before the router's). Once SSE `init` arrives, it trades the code at `/api/send/unlock`.
+- The token is kept in `sessionStorage` (`hub.send`) together with the server run's `epoch`. SSE `init` carries only that epoch (`send`, `null` when sending is off); a saved token from another epoch is dropped.
+- Each successful unlock prints a fresh link to the terminal.
+
+`test/send.test.js` runs a real server and covers this flow.
 
 ### Transcript parsing (`server/parse.js`)
 

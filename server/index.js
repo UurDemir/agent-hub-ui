@@ -22,14 +22,25 @@ const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', HOST.includes(
   .map((h) => `${h}:${PORT}`.toLowerCase()));
 const hostAllowed = (req) => !LOOPBACK || ALLOWED_HOSTS.has(String(req.headers.host).toLowerCase());
 const decode = (s) => { try { return decodeURIComponent(s); } catch { return null; } };
-// Sending messages to sessions is opt-in (--allow-send) and only on a loopback bind. The page gets a
-// per-start token over /api/stream, which other sites can't read; POSTs must carry it in a header.
+// Sending messages to sessions is opt-in (--allow-send) and only on a loopback bind. Nothing that any
+// local program can fetch hands out a send token: the CLI opens (or prints) a one-use link carrying
+// an unlock code in its #fragment, and the tab trades that code for its own token at
+// /api/send/unlock. Each use prints a fresh link for another tab. Sends carry the token in a header.
 const SEND_REQUESTED = process.env.AGENT_HUB_ALLOW_SEND === '1' || process.argv.includes('--allow-send');
-const SEND_TOKEN = SEND_REQUESTED && LOOPBACK ? randomBytes(32).toString('hex') : null;
-const tokenOk = (t) => {
-  const got = Buffer.from(String(t ?? ''));
-  return got.length === SEND_TOKEN.length && timingSafeEqual(got, Buffer.from(SEND_TOKEN));
+const SEND_ON = SEND_REQUESTED && LOOPBACK;
+const SEND_EPOCH = SEND_ON ? randomBytes(8).toString('hex') : null; // not secret: lets a tab drop a token from an earlier run
+const sendTokens = new Set();
+let unlockCode = null;
+const secretEqual = (got, want) => {
+  const a = Buffer.from(String(got ?? ''));
+  const b = Buffer.from(want);
+  return a.length === b.length && timingSafeEqual(a, b);
 };
+const tokenOk = (t) => [...sendTokens].some((s) => secretEqual(t, s));
+function unlockLink() {
+  unlockCode = randomBytes(32).toString('hex');
+  return `${url}/#send=${unlockCode}`;
+}
 
 const claude = new ClaudeCollector();
 const procs = new ProcessScanner();
@@ -55,7 +66,7 @@ function stream(req, res) {
   });
   res.write(frame('init', JSON.stringify({
     host: os.hostname(),
-    sendToken: SEND_TOKEN,
+    send: SEND_EPOCH,
     agents: claude.snapshot(),
     others: procs.others,
     events: claude.allEvents(200),
@@ -109,12 +120,33 @@ function readBody(req, limit) {
   });
 }
 
+// Checks shared by the messaging endpoints; returns true if it already answered.
+function refuseSend(req, res) {
+  let why;
+  if (req.method !== 'POST') why = [405, 'Use POST'];
+  else if (!SEND_ON) why = [403, 'Sending is off. Start Agent Hub with --allow-send.'];
+  else if (req.headers.origin !== `http://${req.headers.host}`) why = [403, 'Bad origin'];
+  else if (!String(req.headers['content-type']).startsWith('application/json')) why = [415, 'Expected JSON'];
+  if (why) json(res, why[0], { error: why[1] });
+  return !!why;
+}
+
+async function unlock(req, res) {
+  if (refuseSend(req, res)) return;
+  let body;
+  try { body = JSON.parse(await readBody(req, 1024)); } catch { return json(res, 400, { error: 'Bad request' }); }
+  if (!unlockCode || !secretEqual(body?.code, unlockCode)) {
+    return json(res, 403, { error: 'This unlock link was already used. Open the newest link Agent Hub printed in its terminal.' });
+  }
+  const token = randomBytes(32).toString('hex');
+  sendTokens.add(token);
+  console.log(`Messaging unlocked in a browser tab. To unlock another tab, open: ${unlockLink()}`);
+  return json(res, 200, { token, epoch: SEND_EPOCH });
+}
+
 async function send(req, res) {
-  if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
-  if (!SEND_TOKEN) return json(res, 403, { error: 'Sending is off. Start Agent Hub with --allow-send.' });
-  if (req.headers.origin !== `http://${req.headers.host}`) return json(res, 403, { error: 'Bad origin' });
+  if (refuseSend(req, res)) return;
   if (!tokenOk(req.headers['x-agent-hub-token'])) return json(res, 403, { error: 'Bad token' });
-  if (!String(req.headers['content-type']).startsWith('application/json')) return json(res, 415, { error: 'Expected JSON' });
   let body;
   try { body = JSON.parse(await readBody(req, MAX_MESSAGE * 4 + 1024)); } catch { return json(res, 400, { error: 'Bad request' }); }
   const text = typeof body?.text === 'string' ? body.text.trim() : '';
@@ -136,7 +168,10 @@ function handle(req, res) {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
   if (req.url === '/api/stream') return stream(req, res);
-  if (req.url === '/api/send') return send(req, res).catch((e) => { if (!res.headersSent) json(res, 400, { error: e.message }); });
+  if (req.url === '/api/send' || req.url === '/api/send/unlock') {
+    return (req.url === '/api/send' ? send : unlock)(req, res)
+      .catch((e) => { if (!res.headersSent) json(res, 400, { error: e.message }); });
+  }
   if (req.url.startsWith('/api/projects')) return projects(req, res);
   if (req.url === '/api/agents') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -167,10 +202,16 @@ server.listen(PORT, HOST, () => {
   claude.start();
   procs.start();
   console.log(`Agent Hub running at ${url}  (Ctrl+C to stop)`);
-  if (SEND_TOKEN) console.log('Sending messages to sessions is on (--allow-send).');
-  else if (SEND_REQUESTED) console.warn('--allow-send is ignored unless Agent Hub listens on a loopback address.');
-  if (process.argv.includes('--open') || process.env.AGENT_HUB_OPEN === '1') {
-    if (process.platform === 'win32') execFile('cmd', ['/c', 'start', '', url]);
-    else execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [url]);
+  if (SEND_REQUESTED && !SEND_ON) console.warn('--allow-send is ignored unless Agent Hub listens on a loopback address.');
+  const open = process.argv.includes('--open') || process.env.AGENT_HUB_OPEN === '1';
+  const link = SEND_ON ? unlockLink() : url;
+  if (SEND_ON) {
+    console.log(open
+      ? 'Messaging is on (--allow-send). The tab opened now can send; later tabs need the link printed after it unlocks.'
+      : `Messaging is on (--allow-send). Open this one-use link to send from a tab: ${link}`);
+  }
+  if (open) {
+    if (process.platform === 'win32') execFile('cmd', ['/c', 'start', '', link]);
+    else execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [link]);
   }
 });
