@@ -31,7 +31,7 @@ curl http://127.0.0.1:4399/api/projects/user   # global ~/.claude setup
 ## Project constraints
 
 - **Zero dependencies.** Server uses only `node:` built-ins (ESM, `"type": "module"`); frontend is plain browser JS with no bundler or framework.
-- **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders.
+- **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders. The one way it acts on sessions is the opt-in `--allow-send` messaging (below). Keep that feature behind the flag, the per-start `SEND_TOKEN`, the Origin check and the loopback-only rule in `server/index.js`.
 - **Local-only.** It binds to `127.0.0.1` because transcripts contain code and prompts. Don't change the default host. `hostAllowed()` in `server/index.js` rejects requests whose `Host` header isn't the loopback address (DNS-rebinding protection); keep it in front of every new route.
 - **Secrets stay hidden.** Anything that surfaces MCP commands, hook commands, env vars, headers or URLs goes through `redact()` / `redactUrl()` in `server/projects.js`; only env/header *names* are sent, never values.
 - **Path access is limited to known projects.** `/api/projects/<id>` only reads projects found in `~/.claude.json` or `~/.claude/projects/`; static serving rejects paths outside `public/`.
@@ -53,7 +53,17 @@ curl http://127.0.0.1:4399/api/projects/user   # global ~/.claude setup
 2. **`ProcessScanner`** (`server/processes.js`) — every 10s lists OS processes (PowerShell `Get-CimInstance` on Windows, `ps` elsewhere) and matches them against the `AGENTS` table to detect other AI tools. Presence/memory/uptime only.
 3. **`ProjectCatalog`** (`server/projects.js`) — on-demand (not streamed). Discovers projects and reads their Claude setup: CLAUDE.md, rules, agents, skills, commands, `.mcp.json`, settings/hooks/permissions, auto-memory, sessions, plugins. Usage counts come from regex scans over transcripts, cached by `size:mtime`.
 
-Endpoints: `GET /api/stream` (SSE: `init` with full snapshot + last 200 events per key, then `agents`, `events`, `others`), `GET /api/agents`, `GET /api/projects`, `GET /api/projects/<id>` (`user` = global `~/.claude` setup). The `agents` event is only broadcast when the JSON snapshot changes.
+Endpoints: `GET /api/stream` (SSE: `init` with full snapshot + last 200 events per key, then `agents`, `events`, `others`), `GET /api/agents`, `GET /api/projects`, `GET /api/projects/<id>` (`user` = global `~/.claude` setup), `POST /api/send` (`{key, text}`; only with `--allow-send`). The `agents` event is only broadcast when the JSON snapshot changes.
+
+### Messaging sessions (`server/messaging.js`)
+
+With `--allow-send` (env `AGENT_HUB_ALLOW_SEND=1`), `/api/send` delivers text to a live session through Claude Code's own cross-session messaging socket. The protocol is undocumented; it was read from the Claude Code 2.1.296 bundle:
+- The session file's `messagingSocketPath` is a named pipe on Windows (`\\.\pipe\LOCAL\cc-msg-<32 hex>`) and a Unix socket elsewhere.
+- The token is `peerToken` in `~/.claude/sessions/<pid>.<sha256(canonical socket path)>.key`. The canonical path is lowercased on Windows and `path.resolve`d elsewhere.
+- Frames are newline-delimited JSON: `{"type":"auth","token"}`, then `{"type":"user","session_id","uuid","from":"agent-hub","message":{"role":"user","content"}}`. Claude Code drops a frame whose `session_id` doesn't match the session.
+- The session receives it as a meta "message from another session". The transcript records it as an `attachment` of type `queued_command` with `origin: {kind: "peer", from}`. `parse.js` turns that into a `prompt` event with `from`, which the UI labels `YOU · HUB` or `SESSION`.
+
+`canMessage` on an agent summary means the session is live and has a socket. The page gets the send token in the SSE `init` payload (`sendToken`, `null` when sending is off).
 
 ### Transcript parsing (`server/parse.js`)
 

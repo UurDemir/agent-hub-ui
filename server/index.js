@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ClaudeCollector } from './claude.js';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { ClaudeCollector, DIR } from './claude.js';
+import { MAX_MESSAGE, sendToSession } from './messaging.js';
 import { ProcessScanner } from './processes.js';
 import { ProjectCatalog } from './projects.js';
 
@@ -20,6 +22,11 @@ const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', HOST.includes(
   .map((h) => `${h}:${PORT}`.toLowerCase()));
 const hostAllowed = (req) => !LOOPBACK || ALLOWED_HOSTS.has(String(req.headers.host).toLowerCase());
 const decode = (s) => { try { return decodeURIComponent(s); } catch { return null; } };
+// Sending messages to sessions is opt-in (--allow-send) and only on a loopback bind. The page gets a
+// per-start token over /api/stream, which other sites can't read; POSTs must carry it in a header.
+const SEND_REQUESTED = process.env.AGENT_HUB_ALLOW_SEND === '1' || process.argv.includes('--allow-send');
+const SEND_TOKEN = SEND_REQUESTED && LOOPBACK ? randomBytes(32).toString('hex') : null;
+const tokenOk = (t) => typeof t === 'string' && t.length === SEND_TOKEN.length && timingSafeEqual(Buffer.from(t), Buffer.from(SEND_TOKEN));
 
 const claude = new ClaudeCollector();
 const procs = new ProcessScanner();
@@ -45,6 +52,7 @@ function stream(req, res) {
   });
   res.write(frame('init', JSON.stringify({
     host: os.hostname(),
+    sendToken: SEND_TOKEN,
     agents: claude.snapshot(),
     others: procs.others,
     events: claude.allEvents(200),
@@ -85,9 +93,44 @@ async function projects(req, res) {
   }
 }
 
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('Message too large')); req.destroy(); } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function send(req, res) {
+  if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
+  if (!SEND_TOKEN) return json(res, 403, { error: 'Sending is off. Start Agent Hub with --allow-send.' });
+  if (req.headers.origin !== `http://${req.headers.host}`) return json(res, 403, { error: 'Bad origin' });
+  if (!tokenOk(req.headers['x-agent-hub-token'])) return json(res, 403, { error: 'Bad token' });
+  if (!String(req.headers['content-type']).startsWith('application/json')) return json(res, 415, { error: 'Expected JSON' });
+  let body;
+  try { body = JSON.parse(await readBody(req, MAX_MESSAGE * 4 + 1024)); } catch { return json(res, 400, { error: 'Bad request' }); }
+  const text = typeof body?.text === 'string' ? body.text.trim() : '';
+  if (!text) return json(res, 400, { error: 'Empty message' });
+  if (text.length > MAX_MESSAGE) return json(res, 400, { error: `Messages are limited to ${MAX_MESSAGE} characters` });
+  const s = typeof body.key === 'string' ? claude.sessions.get(body.key) : null;
+  if (!s?.live || !s.info) return json(res, 404, { error: 'That session is not running' });
+  try {
+    await sendToSession(DIR.sessions, s.info, text);
+    return json(res, 200, { ok: true });
+  } catch (e) {
+    return json(res, 502, { error: e.message });
+  }
+}
+
 function handle(req, res) {
   if (!hostAllowed(req)) { res.writeHead(403).end('Forbidden host'); return; }
   if (req.url === '/api/stream') return stream(req, res);
+  if (req.url === '/api/send') return send(req, res).catch((e) => { if (!res.headersSent) json(res, 400, { error: e.message }); });
   if (req.url.startsWith('/api/projects')) return projects(req, res);
   if (req.url === '/api/agents') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -118,6 +161,8 @@ server.listen(PORT, HOST, () => {
   claude.start();
   procs.start();
   console.log(`Agent Hub running at ${url}  (Ctrl+C to stop)`);
+  if (SEND_TOKEN) console.log('Sending messages to sessions is on (--allow-send).');
+  else if (SEND_REQUESTED) console.warn('--allow-send is ignored unless Agent Hub listens on a loopback address.');
   if (process.argv.includes('--open') || process.env.AGENT_HUB_OPEN === '1') {
     if (process.platform === 'win32') execFile('cmd', ['/c', 'start', '', url]);
     else execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [url]);

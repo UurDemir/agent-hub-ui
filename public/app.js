@@ -30,9 +30,12 @@ const state = {
   notify: store.get('notify', '0') === '1' && 'Notification' in window && Notification.permission === 'granted',
   laneKeys: '',
   detailKey: null,
+  sendToken: null,           // set when the server runs with --allow-send
 };
 
 const $ = (s) => document.querySelector(s);
+// Who wrote a prompt: you, you through Agent Hub's message box, another session, or a subagent's task.
+const promptWho = (e, isSub) => (isSub ? 'TASK' : e.from === 'agent-hub' ? 'YOU · HUB' : e.from ? 'SESSION' : 'YOU');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function fmtDur(ms) {
@@ -323,7 +326,7 @@ function laneTip(ev) {
     const st = r ? `${r.ok ? 'done' : 'failed'} in ${fmtMs(r.ms)}` : 'running';
     tip.innerHTML = `<b style="color:${CAT_COLOR[e.cat]}">${esc(e.label)}</b> ${esc(e.summary)}<div class="m">${fmtTime(e.t)} · ${st}</div>`;
   } else {
-    tip.innerHTML = `<b>${e.kind === 'prompt' ? 'You' : 'Agent'}</b> ${esc(e.text.slice(0, 220))}<div class="m">${fmtTime(e.t)}</div>`;
+    tip.innerHTML = `<b>${e.kind === 'prompt' ? (e.from ? promptWho(e) : 'You') : 'Agent'}</b> ${esc(e.text.slice(0, 220))}<div class="m">${fmtTime(e.t)}</div>`;
   }
   tip.hidden = false;
   const r = tip.getBoundingClientRect();
@@ -408,7 +411,7 @@ function eventHTML(e, a) {
       return `<div class="ev ev-say"><div class="ev-row">${time}</div>
         <div class="body ${state.expanded.has(e.id) ? '' : 'clamp'}" data-id="${esc(e.id)}">${esc(e.text)}</div></div>`;
     case 'prompt':
-      return `<div class="ev ev-prompt"><div class="ev-row"><span class="who">${a.parent ? 'TASK' : 'YOU'}</span>${time}</div>
+      return `<div class="ev ev-prompt"><div class="ev-row"><span class="who">${promptWho(e, !!a.parent)}</span>${time}</div>
         <div class="body">${esc(e.text)}</div></div>`;
     case 'pr':
       return `<div class="ev ev-pr"><div class="ev-row">${time}<a href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener">${esc(e.text)}</a></div></div>`;
@@ -428,11 +431,58 @@ function renderDetail() {
   if (state.detailKey !== a.key) {
     state.detailKey = a.key;
     host.innerHTML = `<div id="d-top"></div>
+      <div id="compose"></div>
       <div class="feed-h"><h4 style="margin:0;font:600 11px var(--mono);letter-spacing:.1em;color:var(--dim)">TIMELINE · NEWEST FIRST</h4><span class="ev-time" id="feed-count"></span></div>
       <div class="feed" id="feed"></div>`;
   }
   $('#d-top').innerHTML = detailHeadHTML(a);
+  renderCompose($('#compose'), a);
   renderFeed();
+}
+
+// Message box for agent `a` (or none) in `host`; used by the detail panel and the canvas chat panel.
+// Rebuilt only when the agent or what it shows changes, so a half-typed message survives updates.
+function renderCompose(host, a) {
+  const mode = !a || a.parent || !a.canMessage ? 'none' : state.sendToken ? 'form' : 'hint';
+  const sig = `${mode}:${a?.key || ''}`;
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  host.dataset.key = a?.key || '';
+  host.className = mode === 'none' ? '' : 'compose';
+  host.innerHTML = mode === 'form'
+    ? `<form class="compose-form">
+        <textarea rows="2" maxlength="20000" placeholder="Message this session… (Enter to send, Shift+Enter for a new line)"></textarea>
+        <div class="compose-row"><span class="compose-msg"></span><button class="btn" type="submit">Send</button></div>
+      </form>`
+    : mode === 'hint'
+      ? '<div class="compose-msg">To message this session from here, start Agent Hub with <code>--allow-send</code>.</div>'
+      : '';
+}
+
+async function sendMessage(form) {
+  const key = form.closest('[data-key]')?.dataset.key;
+  const box = form.querySelector('textarea');
+  const msg = form.querySelector('.compose-msg');
+  const text = box.value.trim();
+  if (!key || !text || form.classList.contains('busy')) return;
+  form.classList.add('busy');
+  msg.className = 'compose-msg';
+  msg.textContent = 'Sending…';
+  try {
+    const r = await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Hub-Token': state.sendToken },
+      body: JSON.stringify({ key, text }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    box.value = '';
+    msg.textContent = 'Sent.';
+  } catch (e) {
+    msg.classList.add('err');
+    msg.textContent = e.message;
+  }
+  form.classList.remove('busy');
 }
 
 function renderFeed() {
@@ -492,6 +542,8 @@ function connect() {
     state.events.clear(); state.seen.clear(); state.tools.clear();
     for (const [k, evs] of Object.entries(d.events)) addEvents(k, evs);
     state.others = d.others || [];
+    state.sendToken = d.sendToken || null;
+    for (const host of document.querySelectorAll('#compose, #fl-compose')) delete host.dataset.sig;
     renderOthers();
     setConn(true, d.host);
     setAgents(d.agents);
@@ -537,6 +589,17 @@ document.addEventListener('click', (ev) => {
     if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
     renderFeed();
   }
+});
+
+document.addEventListener('submit', (ev) => {
+  if (!ev.target.matches('.compose-form')) return;
+  ev.preventDefault();
+  sendMessage(ev.target);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || !ev.target.matches('.compose-form textarea')) return;
+  ev.preventDefault();
+  sendMessage(ev.target.form);
 });
 
 $('#lanes').addEventListener('mousemove', laneTip);

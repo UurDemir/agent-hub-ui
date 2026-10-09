@@ -254,6 +254,20 @@ h2 { font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase
 .sub-row .m { font: 11px var(--mono); color: var(--dim); margin-left: auto; white-space: nowrap; }
 .back { background: none; border: 0; color: var(--done); cursor: pointer; padding: 0; font: 12px var(--mono); text-align: left; }
 
+.compose { padding: 10px 16px; border-bottom: 1px solid var(--line); flex: none; }
+.compose textarea {
+  width: 100%; resize: vertical; min-height: 42px; max-height: 200px; display: block;
+  background: var(--bg2); border: 1px solid var(--line2); border-radius: 8px; color: var(--text);
+  padding: 8px 10px; font: 13px/1.45 var(--sans);
+}
+.compose textarea:focus { outline: none; border-color: var(--dim); }
+.compose-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.compose-row .btn { margin-left: auto; }
+.compose-msg { font: 11px var(--mono); color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.compose-msg.err { color: var(--c-error); }
+.compose-msg code { color: var(--muted); }
+.compose .busy .btn { opacity: .5; pointer-events: none; }
+
 .feed-h { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 6px; }
 .feed { overflow-y: auto; padding: 0 8px 16px; flex: 1; }
 .ev { padding: 6px 8px; border-radius: 6px; font-size: 13px; }
@@ -584,6 +598,9 @@ main#view-canvas { position: fixed; inset: var(--top, 64px) 0 0 0; padding: 0; g
 .fl-file b { color: var(--muted); }
 .fl-file u { text-decoration: none; color: var(--c-edit); }
 .fl-chat { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 330px); overflow: auto; }
+.fl-panel .compose { margin-top: 10px; padding: 10px 0 0; border-bottom: 0; border-top: 1px solid rgba(140, 170, 220, .18); }
+.fl-panel .compose textarea { background: rgba(0, 0, 0, .3); border-color: rgba(140, 170, 220, .18); font-size: 12.5px; }
+.fl-panel:has(.compose) .fl-chat { max-height: calc(100vh - 430px); }
 .fl-c-msg { padding: 6px 8px; border-radius: 6px; background: rgba(255, 255, 255, .03); color: var(--text); white-space: pre-wrap; word-break: break-word; font-family: var(--sans); font-size: 12.5px; }
 .fl-c-msg b { font: 600 10.5px var(--mono); letter-spacing: .08em; color: var(--done); margin-right: 4px; }
 .fl-c-msg.prompt b { color: var(--text); }

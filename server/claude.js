@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { Tail, Transcript, activity, clip, costRates, transcriptCost } from './parse.js';
 
 const ROOT = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-const DIR = {
+export const DIR = {
   sessions: path.join(ROOT, 'sessions'),
   projects: path.join(ROOT, 'projects'),
   jobs: path.join(ROOT, 'jobs'),
@@ -200,6 +200,7 @@ export class ClaudeCollector extends EventEmitter {
       pid: info.pid ?? null,
       live: s.live,
       kind: info.kind || '',
+      canMessage: s.live && typeof info.messagingSocketPath === 'string' && !!info.messagingSocketPath,
       name: tr.agentName || info.name || tr.title || clip(tr.lastPrompt, 60) || path.basename(cwd) || s.sessionId.slice(0, 8),
       title: tr.title,
       project: path.basename(cwd),
