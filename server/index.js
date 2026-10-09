@@ -26,7 +26,10 @@ const decode = (s) => { try { return decodeURIComponent(s); } catch { return nul
 // per-start token over /api/stream, which other sites can't read; POSTs must carry it in a header.
 const SEND_REQUESTED = process.env.AGENT_HUB_ALLOW_SEND === '1' || process.argv.includes('--allow-send');
 const SEND_TOKEN = SEND_REQUESTED && LOOPBACK ? randomBytes(32).toString('hex') : null;
-const tokenOk = (t) => typeof t === 'string' && t.length === SEND_TOKEN.length && timingSafeEqual(Buffer.from(t), Buffer.from(SEND_TOKEN));
+const tokenOk = (t) => {
+  const got = Buffer.from(String(t ?? ''));
+  return got.length === SEND_TOKEN.length && timingSafeEqual(got, Buffer.from(SEND_TOKEN));
+};
 
 const claude = new ClaudeCollector();
 const procs = new ProcessScanner();
@@ -129,6 +132,9 @@ async function send(req, res) {
 
 function handle(req, res) {
   if (!hostAllowed(req)) { res.writeHead(403).end('Forbidden host'); return; }
+  // No framing by other sites (clickjacking the message box).
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
   if (req.url === '/api/stream') return stream(req, res);
   if (req.url === '/api/send') return send(req, res).catch((e) => { if (!res.headersSent) json(res, 400, { error: e.message }); });
   if (req.url.startsWith('/api/projects')) return projects(req, res);

@@ -31,7 +31,7 @@ curl http://127.0.0.1:4399/api/projects/user   # global ~/.claude setup
 ## Project constraints
 
 - **Zero dependencies.** Server uses only `node:` built-ins (ESM, `"type": "module"`); frontend is plain browser JS with no bundler or framework.
-- **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders. The one way it acts on sessions is the opt-in `--allow-send` messaging (below). Keep that feature behind the flag, the per-start `SEND_TOKEN`, the Origin check and the loopback-only rule in `server/index.js`.
+- **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders. The one way it acts on sessions is the opt-in `--allow-send` messaging (below). Keep that feature behind the flag, the per-start `SEND_TOKEN`, the Origin check, the anti-framing headers and the loopback-only rule in `server/index.js`. These checks stop browsers only. Any local process can read the token from `/api/stream`, and the README says so.
 - **Local-only.** It binds to `127.0.0.1` because transcripts contain code and prompts. Don't change the default host. `hostAllowed()` in `server/index.js` rejects requests whose `Host` header isn't the loopback address (DNS-rebinding protection); keep it in front of every new route.
 - **Secrets stay hidden.** Anything that surfaces MCP commands, hook commands, env vars, headers or URLs goes through `redact()` / `redactUrl()` in `server/projects.js`; only env/header *names* are sent, never values.
 - **Path access is limited to known projects.** `/api/projects/<id>` only reads projects found in `~/.claude.json` or `~/.claude/projects/`; static serving rejects paths outside `public/`.

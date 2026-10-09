@@ -56,7 +56,8 @@ export function sendToSession(dir, info, text) {
     const c = net.connect(sock);
     const timer = setTimeout(() => c.destroy(new Error('Timed out talking to the session.')), TIMEOUT_MS);
     c.once('connect', () => c.end(frames(token, info.sessionId, text)));
-    c.once('error', (e) => { clearTimeout(timer); reject(e); });
+    // net errors name the socket path; report only the code.
+    c.on('error', (e) => { clearTimeout(timer); reject(e.code ? new Error(`Could not reach the session (${e.code}).`) : e); });
     c.once('close', (hadError) => { clearTimeout(timer); if (!hadError) resolve(); });
   });
 }
