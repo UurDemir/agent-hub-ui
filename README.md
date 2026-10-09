@@ -61,6 +61,10 @@ It reads only these files, never writes them, and never touches your credentials
 
 To add another agent that keeps local logs, write a collector like `server/claude.js` that emits the same event shape (`prompt`, `say`, `tool`, `result`).
 
+## Acknowledgements
+
+The Canvas view's design is based on [agent-flow](https://github.com/patoles/agent-flow) by Simon Patole ([@patoles](https://github.com/patoles)).
+
 ## License
 
 [MIT](LICENSE) © Uğur Demir
