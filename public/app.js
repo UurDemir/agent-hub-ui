@@ -477,7 +477,8 @@ async function sendMessage(form) {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
     box.value = '';
-    msg.textContent = 'Sent.';
+    // The socket gives no delivery receipt; the transcript does, as a YOU · HUB timeline entry.
+    msg.textContent = 'Sent. It appears in the timeline once the session takes it.';
   } catch (e) {
     msg.classList.add('err');
     msg.textContent = e.message;
