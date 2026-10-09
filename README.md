@@ -24,6 +24,7 @@ It starts on http://127.0.0.1:4317 and opens your browser. Stop it with Ctrl+C.
 | `--port <port>` | Use another port (default 4317) |
 | `--no-open` | Don't open the browser |
 | `--host <host>` | Address to bind (default `127.0.0.1`; keep it local, transcripts contain your code) |
+| `--allow-send` | Let the dashboard send messages to running Claude Code sessions (see [Messaging sessions](#messaging-sessions)) |
 
 To keep it around, install it globally with `npm install -g agent-hub-ui` and run `agent-hub`.
 
@@ -44,6 +45,7 @@ From a clone, use `npm start` (or `npm run open` to also open the browser). Ther
   - plugins (global setup only)
 
   Credentials in MCP commands, env vars and headers are hidden. The API only reads paths of projects Claude Code already knows about.
+- **Messaging** (optional, `--allow-send`): a message box in the detail panel and in the Canvas chat panel sends text to a running session. See below.
 - **Notifications** (optional): a desktop notification when an agent finishes or needs your input while the tab is in the background.
 
 ## How it works
@@ -57,9 +59,17 @@ From a clone, use `npm start` (or `npm run open` to also open the browser). Ther
 | `…/<session>/subagents/agent-*.jsonl` | subagent transcripts and metadata |
 | `~/.claude/jobs/<id>/state.json` | background-job state and its running shell tasks |
 
-It reads only these files, never writes them, and never touches your credentials. The server listens on `127.0.0.1` only, because transcripts contain your code and prompts. Set `PORT` to change the port. Set `CLAUDE_CONFIG_DIR` if your Claude config lives somewhere else.
+It reads only these files, never writes them, and never touches your Claude login credentials. With `--allow-send` it also reads each session's messaging key (`~/.claude/sessions/<pid>.<hash>.key`) to send messages. The server listens on `127.0.0.1` only, because transcripts contain your code and prompts. Set `PORT` to change the port. Set `CLAUDE_CONFIG_DIR` if your Claude config lives somewhere else.
 
 To add another agent that keeps local logs, write a collector like `server/claude.js` that emits the same event shape (`prompt`, `say`, `tool`, `result`).
+
+## Messaging sessions
+
+Start with `--allow-send` (`npx agent-hub-ui --allow-send`, or `npm start -- --allow-send` from a clone) and running Claude Code sessions get a message box: in the detail panel on the Live view, and under the conversation in the Canvas **Chat** panel. Enter sends, Shift+Enter adds a new line.
+
+Messages go through the local messaging socket Claude Code opens for each session, the same channel Claude sessions use to message each other. The session gets your text as a message from another session, not as if you had typed it in its terminal. It's queued until the current turn ends and then handled like a request from a teammate: it can't approve a pending permission prompt or change the session's settings. Sent messages show in the timeline as **YOU · HUB**, and messages from other sessions as **SESSION**.
+
+This is off by default because it lets the page start work in your agents. When it's on, the server creates a random token at startup and gives it only to the dashboard page. Every send must include that token and come from the dashboard's own origin. `--allow-send` is ignored unless the server listens on a loopback address. The socket protocol isn't documented by Anthropic, so a Claude Code update can break it. If that happens, the message box shows the error.
 
 ## Acknowledgements
 

@@ -14,6 +14,8 @@ Options:
       --host <host>   Address to bind (default 127.0.0.1, or $HOST).
                       Transcripts contain your code and prompts, so keep it local.
       --no-open       Don't open the browser
+      --allow-send    Let the dashboard send messages to running Claude Code
+                      sessions (through Claude Code's local messaging socket)
   -v, --version       Print the version
   -h, --help          Show this help
 
@@ -32,6 +34,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '-v' || a === '--version') { console.log(pkg.version); process.exit(0); }
   else if (a === '--no-open') open = false;
   else if (a === '--open') open = true;
+  else if (a === '--allow-send') process.env.AGENT_HUB_ALLOW_SEND = '1';
   else if (a === '-p' || a.startsWith('--port')) {
     const port = Number(value());
     if (!Number.isInteger(port) || port < 1 || port > 65535) { console.error('--port must be a number between 1 and 65535'); process.exit(1); }

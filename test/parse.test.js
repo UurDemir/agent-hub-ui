@@ -173,3 +173,17 @@ test('Tail started mid-file drops the partial first line', (t) => {
   fs.writeFileSync(file, '{"first":"xxxxxxxxxx"}\n{"b":2}\n');
   assert.deepEqual(new Tail(file, 12).read(), [{ b: 2 }]);
 });
+
+test('messages delivered through the messaging socket become prompts with a sender', () => {
+  const tr = new Transcript();
+  const queued = (origin) => ({
+    type: 'attachment', uuid: 'q1', timestamp: T0,
+    attachment: { type: 'queued_command', prompt: ' run the tests ', commandMode: 'prompt', origin, isMeta: true },
+  });
+  const [e] = tr.ingest(queued({ kind: 'peer', from: 'agent-hub' }));
+  assert.equal(e.kind, 'prompt');
+  assert.equal(e.from, 'agent-hub');
+  assert.equal(e.text, 'run the tests');
+  assert.deepEqual(tr.ingest(queued({ kind: 'user' })), []);
+  assert.deepEqual(tr.ingest({ type: 'attachment', timestamp: T0, attachment: { type: 'other' } }), []);
+});

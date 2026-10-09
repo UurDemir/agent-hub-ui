@@ -566,7 +566,7 @@ function renderPanel(agents, sel) {
       const evs = eventsAt(sel.key, nowT()).slice(-80);
       html = `<div class="fl-p-h"><b>${esc(sel.isSub ? sel.a.type : sel.a.name)}</b><a href="#/live/${encodeURIComponent(sel.key)}">open ↗</a></div><div class="fl-chat">${evs.map((e) => {
         if (e.kind === 'tool') return `<div class="fl-c-tool c-${e.cat}"><span class="chip">${esc(e.label)}</span>${esc(e.summary)}${e.result ? (e.result.ok ? ' <i class="ok">✓</i>' : ' <i class="err">✗</i>') : ''}</div>`;
-        if (e.kind === 'say' || e.kind === 'prompt') return `<div class="fl-c-msg ${e.kind}"><b>${e.kind === 'say' ? 'CLAUDE' : sel.isSub ? 'TASK' : 'YOU'}</b> ${esc(e.text)}</div>`;
+        if (e.kind === 'say' || e.kind === 'prompt') return `<div class="fl-c-msg ${e.kind}"><b>${e.kind === 'say' ? 'CLAUDE' : promptWho(e, sel.isSub)}</b> ${esc(e.text)}</div>`;
         return `<div class="fl-c-note">${esc(e.text)}</div>`;
       }).join('') || '<div class="fl-none">No activity recorded yet.</div>'}</div>`;
     }
@@ -588,12 +588,15 @@ function renderPanel(agents, sel) {
         <span>${esc(parts.pop())} <em>${esc(parts.slice(-2).join('/'))}</em></span><b>${f.r ? `R${f.r}` : ''}${f.w ? ` <u>E${f.w}</u>` : ''}</b></div>`;
     }).join('') || '<div class="fl-none">No files read or changed yet.</div>'}`;
   }
-  if (panel._html !== html) {
-    const chat = panel.querySelector('.fl-chat');
+  // The message box lives outside the re-rendered body so typing isn't interrupted.
+  renderCompose($('#fl-compose'), FL.panel === 'chat' ? sel?.a : null);
+  const body = $('#fl-panel-body');
+  if (body._html !== html) {
+    const chat = body.querySelector('.fl-chat');
     const atBottom = !chat || chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 20;
-    panel.innerHTML = html;
-    panel._html = html;
-    const next = panel.querySelector('.fl-chat');
+    body.innerHTML = html;
+    body._html = html;
+    const next = body.querySelector('.fl-chat');
     if (next && atBottom) next.scrollTop = next.scrollHeight;
   }
 }
@@ -675,7 +678,7 @@ function ensureStage(host) {
         <div class="fl-group" id="fl-toggles"><button class="fl-btn" data-panel="files">Files</button><button class="fl-btn" data-panel="chat">Chat</button><button class="fl-btn" data-panel="cost">$Cost</button></div>
         <button class="fl-btn" id="fl-tl-btn">Timeline</button>
       </div>
-      <aside class="fl-ui fl-panel" id="fl-panel" hidden></aside>
+      <aside class="fl-ui fl-panel" id="fl-panel" hidden><div id="fl-panel-body"></div><div id="fl-compose"></div></aside>
       <div class="fl-empty" id="fl-empty" hidden></div>
       <div class="fl-ui fl-timeline" id="fl-timeline">
         <button class="fl-live" id="fl-live" title="Back to live"></button>

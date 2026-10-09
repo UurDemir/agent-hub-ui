@@ -168,6 +168,14 @@ export class Transcript {
         if (j.subtype === 'compact_boundary') out.push({ kind: 'note', text: 'Context compacted' });
         else if (j.subtype === 'turn_duration') { this.pending.clear(); this.phase = { kind: 'done', t }; }
         break;
+      case 'attachment': {
+        // A message from another session or from Agent Hub, delivered through the messaging socket.
+        const a = j.attachment;
+        if (a?.type === 'queued_command' && a.origin?.kind === 'peer' && typeof a.prompt === 'string' && a.prompt.trim()) {
+          out.push({ kind: 'prompt', from: clip(String(a.origin.from || 'another session'), 80), text: clip(a.prompt.trim(), 1500) });
+        }
+        break;
+      }
       case 'assistant': this.assistant(j, t, out); break;
       case 'user': this.user(j, t, out); break;
     }
