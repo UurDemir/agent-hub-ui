@@ -65,11 +65,20 @@ To add another agent that keeps local logs, write a collector like `server/claud
 
 ## Messaging sessions
 
-Start with `--allow-send` (`npx agent-hub-ui --allow-send`, or `npm start -- --allow-send` from a clone) and running Claude Code sessions get a message box: in the detail panel on the Live view, and under the conversation in the Canvas **Chat** panel. Enter sends, Shift+Enter adds a new line.
+Start with `--allow-send` (`npx agent-hub-ui --allow-send`, or `npm start -- --allow-send` from a clone). Running Claude Code sessions then get a message box in the Live view's detail panel and under the conversation in the Canvas **Chat** panel. Enter sends, Shift+Enter adds a new line.
+
+Only browser tabs you unlock can send:
+
+- The tab Agent Hub opens at startup is unlocked. It keeps working after a reload, until the server restarts.
+- Any other tab shows a note instead of the box. To unlock one, open the one-use link Agent Hub printed in its terminal (`…/#send=<code>`), either in a new tab or pasted into the open one.
+- Each time a link is used, the terminal prints a fresh one for the next tab.
+- With `--no-open`, or `npm start`, nothing is opened; the first link is printed instead.
 
 Messages go through the local messaging socket Claude Code opens for each session, the same channel Claude sessions use to message each other. The session gets your text as a message from another session, not as if you had typed it in its terminal. It's queued until the current turn ends. The agent can act on it with whatever tools that session is already allowed to use, so treat it like typing a prompt into that session. Sent messages show in the timeline as **YOU · HUB**, and messages from other sessions as **SESSION**. The label comes from the sender's self-reported name, so another session could also claim to be the hub.
 
-This is off by default because it lets the dashboard start work in your agents. When it's on, the server creates a random token at startup and puts it in the dashboard's live data stream. Every send must include that token and come from the dashboard's own origin. Browsers block other websites from reading the token or sending with it, and the dashboard can't be embedded in another site. Programs running on your machine are a different matter: any of them can read the token from the server and send messages. Only use `--allow-send` on a machine where you trust every local user and program. `--allow-send` is ignored unless the server listens on a loopback address. The socket protocol isn't documented by Anthropic, so a Claude Code update can break it. If that happens, the message box shows the error.
+This is off by default because it lets the dashboard start work in your agents. When it's on, each unlocked tab gets its own random token, and every send must include it and come from the dashboard's own origin. No API call hands a token to anything that doesn't hold an unlock code. Codes live only in the URL fragment, which browsers never send to a server, and in the terminal. Other websites can't read a token or send with one, and the dashboard can't be embedded in another site.
+
+The unlock link that opens at startup is briefly visible in the browser-launch command line, and it ends up in your browser history. Another program on your machine that catches it before your tab uses it could unlock itself instead. Your tab would then show the "already used" error, so you'd notice. Still, only use `--allow-send` on a machine where you trust the local users and programs. `--allow-send` is ignored unless the server listens on a loopback address. The socket protocol isn't documented by Anthropic, so a Claude Code update can break it. If that happens, the message box shows the error.
 
 ## Acknowledgements
 

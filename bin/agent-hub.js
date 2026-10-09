@@ -15,7 +15,9 @@ Options:
                       Transcripts contain your code and prompts, so keep it local.
       --no-open       Don't open the browser
       --allow-send    Let the dashboard send messages to running Claude Code
-                      sessions (through Claude Code's local messaging socket)
+                      sessions (through Claude Code's local messaging socket).
+                      Only the opened tab can send; more tabs need the
+                      one-use link printed in the terminal
   -v, --version       Print the version
   -h, --help          Show this help
 
