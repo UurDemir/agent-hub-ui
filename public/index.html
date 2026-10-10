@@ -25,6 +25,8 @@
     </nav>
     <div class="counters" id="counters"></div>
     <div class="top-actions">
+      <span class="reporting" id="reporting" hidden></span>
+      <select class="btn machine-pick" id="machine-pick" aria-label="Machine" hidden></select>
       <button class="btn" id="notify" title="Notify me when an agent finishes or needs input">Notifications off</button>
       <span class="conn" id="conn"><i></i><span>offline</span></span>
     </div>
@@ -51,7 +53,9 @@
         <div class="cards" id="cards"></div>
         <div class="floor-h recent-h" id="recent-h" hidden><h2>Recently ended</h2></div>
         <div class="cards recent" id="recent"></div>
-        <div class="floor-h"><h2>Other AI tools on this PC</h2><span class="sub">detected from running processes</span></div>
+        <div class="floor-h" id="machines-h" hidden><h2>Machines</h2><span class="sub">reporting to this hub · click one to show only its agents</span></div>
+        <div class="others" id="machines" hidden></div>
+        <div class="floor-h"><h2 id="others-h">Other AI tools on this PC</h2><span class="sub">detected from running processes</span></div>
         <div class="others" id="others"></div>
       </section>
 

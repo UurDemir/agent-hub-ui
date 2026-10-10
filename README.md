@@ -48,6 +48,74 @@ From a clone, use `npm start` (or `npm run open` to also open the browser). Ther
 - **Messaging** (optional, `--allow-send`): a message box in the detail panel and in the Canvas chat panel sends text to a running session. See below.
 - **Notifications** (optional): a desktop notification when an agent finishes or needs your input while the tab is in the background.
 
+## Many machines on one dashboard (optional)
+
+By default nothing leaves your PC. To watch agents on several machines in one place, for yourself or for a team, run one Agent Hub as a **hub** and have the other machines **report** to it.
+
+**1. Create a key per machine** (on any machine):
+
+```
+npx agent-hub-ui --new-key alice-laptop
+```
+
+This prints a key for that machine and a keys-file entry for the hub. The keys file only stores a hash of each key:
+
+```json
+{ "machines": [
+  { "name": "alice-laptop", "sha256": "…" },
+  { "name": "build-box", "sha256": "…", "share": "metadata" }
+] }
+```
+
+`share` (optional) caps what the hub keeps from that machine, whatever the machine sends. The hub re-reads the file when it changes, so deleting an entry revokes that machine without a restart.
+
+**2. Start the hub:**
+
+```
+npx agent-hub-ui --hub --hub-keys keys.json --tls-cert cert.pem --tls-key key.pem
+```
+
+Reporters send to its ingest port (4318, all interfaces). That port only accepts reports signed with a known key; it serves no data. The dashboard stays on `127.0.0.1:4317` as usual. Without `--tls-cert`, put the ingest port behind a TLS proxy or use it only on an encrypted network (VPN, Tailscale, WireGuard).
+
+**3. Report from each machine:**
+
+```
+AGENT_HUB_REPORT_KEY=ahk_… npx agent-hub-ui --report-to https://hub.example.com:4318 --share metadata
+```
+
+Add `--headless` to report without opening the local dashboard, for example as a background service. `--report-key-file <file>` reads the key from a file instead. Use a self-signed hub certificate by pointing `NODE_EXTRA_CA_CERTS` at it. The reporter refuses a plain `http://` hub that isn't on the same machine unless you pass `--allow-http`.
+
+**What leaves the machine** is set on the machine itself with `--share`, and the hub can only lower it:
+
+| Level | Sends |
+|---|---|
+| `metadata` (default) | status, project folder name, model, tokens, cost, tool names and timings |
+| `activity` | adds session titles, branches, plans (TodoWrite), subagent task descriptions, PR links and one-line tool summaries |
+| `full` | adds prompts, replies, tool input and output, and full paths |
+
+The reporting machine's own dashboard shows a "Reporting to … · level" badge at the top while it reports, and the terminal prints the same. Sending can't be turned on from the hub. If you monitor other people's machines, tell them and choose the lowest level that does the job; employee-monitoring rules (GDPR, works councils, KVKK and others) may apply.
+
+**Showing the hub to others.** The hub dashboard has every reporting machine's activity, so it won't listen beyond `127.0.0.1` without a login. The recommended setup is your company SSO in front of it: a reverse proxy (oauth2-proxy, Cloudflare Access, nginx with SSO…) on the hub machine forwards to `127.0.0.1:4317`. Pass the public host name with `--allowed-host hub.example.com` (add `:port` if the browser's address has one) so the dashboard accepts it. Viewers coming through that name, or over the network, see the agents but not the hub PC's own Projects page. If you don't have SSO, `--viewer-password` (or `$AGENT_HUB_VIEWER_PASSWORD`) adds a simple password prompt; use it only over TLS or a VPN.
+
+The hub keeps everything in memory: the last 200 events per session, like a normal dashboard. A machine that stops reporting shows as disconnected after 20 seconds and is dropped after 3 hours. The Projects page still shows only the hub machine's own projects.
+
+| Hub options | |
+|---|---|
+| `--hub` | Accept reports from the machines in the keys file |
+| `--hub-keys <file>` | The keys file (required with `--hub`) |
+| `--ingest-port <port>` / `--ingest-host <host>` | Where reporters connect (default `0.0.0.0:4318`) |
+| `--tls-cert <file>` / `--tls-key <file>` | Serve the ingest port over HTTPS |
+| `--allowed-host <host>` | Accept this `Host` header, e.g. your proxy's public name (repeatable) |
+| `--viewer-password <p>` | Require this password for the dashboard |
+
+| Reporter options | |
+|---|---|
+| `--report-to <url>` | The hub's ingest URL |
+| `--report-key-file <file>` | File holding this machine's key (or `$AGENT_HUB_REPORT_KEY`) |
+| `--share <level>` | `metadata` (default), `activity` or `full` |
+| `--headless` | Don't serve the local dashboard |
+| `--allow-http` | Allow a plain-http hub on another machine |
+
 ## How it works
 
 `server/` reads Claude Code's local state and streams it to the page over Server-Sent Events:
@@ -59,7 +127,7 @@ From a clone, use `npm start` (or `npm run open` to also open the browser). Ther
 | `…/<session>/subagents/agent-*.jsonl` | subagent transcripts and metadata |
 | `~/.claude/jobs/<id>/state.json` | background-job state and its running shell tasks |
 
-It reads only these files, never writes them, and never touches your Claude login credentials. With `--allow-send` it also reads each session's messaging key (`~/.claude/sessions/<pid>.<hash>.key`) to send messages. The server listens on `127.0.0.1` only, because transcripts contain your code and prompts. Set `PORT` to change the port. Set `CLAUDE_CONFIG_DIR` if your Claude config lives somewhere else.
+It reads only these files, never writes them, and never touches your Claude login credentials. With `--allow-send` it also reads each session's messaging key (`~/.claude/sessions/<pid>.<hash>.key`) to send messages. The server listens on `127.0.0.1` only, because transcripts contain your code and prompts. Nothing is sent anywhere unless you start it with `--report-to` (see above). Set `PORT` to change the port. Set `CLAUDE_CONFIG_DIR` if your Claude config lives somewhere else.
 
 To add another agent that keeps local logs, write a collector like `server/claude.js` that emits the same event shape (`prompt`, `say`, `tool`, `result`).
 

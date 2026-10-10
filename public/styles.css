@@ -672,3 +672,18 @@ main#view-canvas { position: fixed; inset: var(--top, 64px) 0 0 0; padding: 0; g
   .lane canvas { height: 24px; }
   .cards { grid-template-columns: 1fr; }
 }
+
+/* ---------- hub: machines and reporting ---------- */
+.machine-pick { font: 12px var(--mono); max-width: 200px; outline: none; }
+.reporting {
+  font: 12px var(--mono); color: var(--muted); white-space: nowrap;
+  padding: 5px 10px; border-radius: 99px; border: 1px solid var(--line2);
+}
+.reporting::before { content: '↗ '; color: var(--dim); }
+.reporting.ok { color: var(--working); border-color: rgba(62, 224, 143, .35); }
+.reporting.err { color: var(--c-error); border-color: color-mix(in srgb, var(--c-error) 45%, transparent); }
+.where .machine { color: var(--text); flex: none; }
+.other.machine { cursor: pointer; }
+.other.machine:hover { border-color: var(--line2); }
+.other.machine.on { border-color: rgba(62, 224, 143, .45); }
+.share-note { font-size: 12px; color: var(--dim); border-left: 2px solid var(--line2); padding-left: 8px; }

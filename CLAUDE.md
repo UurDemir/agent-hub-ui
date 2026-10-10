@@ -14,7 +14,7 @@ npm test                                              # node --test, runs test/*
 node --test --test-name-pattern="redact" test/projects.test.js   # a single test
 ```
 
-Node 20+, no dependencies, no build step, no `npm install`. Tests use the built-in `node:test`; there is no linter. Env vars: `PORT`, `HOST` (default `127.0.0.1`), `CLAUDE_CONFIG_DIR` (default `~/.claude`).
+Node 20+, no dependencies, no build step, no `npm install`. Tests use the built-in `node:test`; there is no linter. Env vars: `PORT`, `HOST` (default `127.0.0.1`), `CLAUDE_CONFIG_DIR` (default `~/.claude`). Hub and reporter flags map to `AGENT_HUB_*` env vars set by `bin/agent-hub.js` (`PORT=0` / `AGENT_HUB_INGEST_PORT=0` pick a free port; the server logs the real one).
 
 Distribution: published to npm as `agent-hub-ui` and run with `npx agent-hub-ui` (or `npx github:UurDemir/agent-hub-ui`). `bin/agent-hub.js` is the CLI (`--port`, `--host`, `--no-open`, `--help`); it sets env vars and imports `server/index.js`. Only `bin/`, `server/` and `public/` ship (the `files` list in `package.json`) — a new runtime file anywhere else won't be in the package; check with `npm pack --dry-run`. `.gitattributes` forces LF so the CLI's shebang works on macOS/Linux. Releases: bump `version`, push, then publish a GitHub release tagged `v<version>`; `.github/workflows/publish.yml` runs the tests and `npm publish` through npm trusted publishing (no token; the package's Trusted Publisher on npmjs.com points at this repo and `publish.yml`, so renaming the workflow breaks publishing). CI (`ci.yml`) runs the tests and a packed-CLI smoke test on Linux, Windows and macOS.
 
@@ -32,7 +32,8 @@ curl http://127.0.0.1:4399/api/projects/user   # global ~/.claude setup
 
 - **Zero dependencies.** Server uses only `node:` built-ins (ESM, `"type": "module"`); frontend is plain browser JS with no bundler or framework.
 - **Read-only.** The app reads Claude Code's local state and never writes to `~/.claude`, `~/.claude.json` or project folders. The one way it acts on sessions is the opt-in `--allow-send` messaging (below). Keep that feature behind the flag, the one-use unlock codes and per-tab tokens, the Origin check, the anti-framing headers and the loopback-only rule in `server/index.js`. Never put a send token or unlock code in anything a GET returns (`/api/stream`, `/api/agents`): that would hand it to every local process.
-- **Local-only.** It binds to `127.0.0.1` because transcripts contain code and prompts. Don't change the default host. `hostAllowed()` in `server/index.js` rejects requests whose `Host` header isn't the loopback address (DNS-rebinding protection); keep it in front of every new route.
+- **Local-only.** It binds to `127.0.0.1` because transcripts contain code and prompts. Don't change the default host. `hostAllowed()` in `server/index.js` rejects requests whose `Host` header isn't the loopback address or an `--allowed-host` (DNS-rebinding protection); keep it in front of every new dashboard route. The only exceptions are opt-in hub mode (below): a reporter sends data only with `--report-to`, and a hub's network-facing ingest port only accepts keyed reports and serves nothing.
+- **Multi-machine stays opt-in and minimal.** Everything a reporter sends and a hub keeps goes through the allowlists in `server/share.js`; a new agent or event field is private until listed there with its level. Those functions also coerce types, because remote data ends up in the hub's HTML (numbers and class names are interpolated without `esc()`). The sharing level is chosen on the reporting machine (`--share`, default `metadata`) and the keys file can only lower it. Never let the hub ask for more, never relay `--allow-send` to remote machines or accept it from remote viewers (`refuseSend()` rejects `remoteViewer()` requests, and they get no send epoch), and keep the hub dashboard refusing a non-loopback bind without `--viewer-password`.
 - **Secrets stay hidden.** Anything that surfaces MCP commands, hook commands, env vars, headers or URLs goes through `redact()` / `redactUrl()` in `server/projects.js`; only env/header *names* are sent, never values.
 - **Path access is limited to known projects.** `/api/projects/<id>` only reads projects found in `~/.claude.json` or `~/.claude/projects/`; static serving rejects paths outside `public/`.
 - **Cross-platform.** Windows and POSIX are both supported (see the `win32` branches in `server/processes.js` and `norm()` in `server/projects.js`).
@@ -71,6 +72,14 @@ With `--allow-send` (env `AGENT_HUB_ALLOW_SEND=1`), `/api/send` delivers text to
 
 `test/send.test.js` runs a real server and covers this flow.
 
+### Hub and reporting (`server/hub.js`, `server/reporter.js`, `server/share.js`)
+
+- **Reporter** (`--report-to <url>`): every ~1s POSTs gzipped JSON to `<url>/ingest` with `Authorization: Bearer <machine key>`: `{v, instance, seq, share, host, version}` plus either `init` (`agents`, `others`, `events` like SSE `init`) or the changes since the last post (`agents`, `others`, `events: [{key, events}]`), with a heartbeat every 5s. Data is filtered with `share.js` before it is sent. On any failure, or when the hub answers `needInit`, it drops its buffer and sends a fresh `init`. `ingestUrl()` refuses plain http off-machine without `--allow-http`. `--headless` starts no dashboard.
+- **Hub** (`--hub --hub-keys <file>`): a second listener (`--ingest-port`, default `0.0.0.0:4318`, optional `--tls-cert/--tls-key`) with only `POST /ingest`. `Keyring` stores sha256 hashes, compares in constant time and re-reads the file on change (revocation). The machine name comes from the key entry, never from the report. `Hub.ingest()` requires `init` from an unknown instance or after a `seq` gap, refuses a second instance on the same key while the first is active (409), and re-applies `share.js` with `min(reported level, entry.share)`.
+- Remote agent keys are `<machine>:<sessionId>` (subagents `<machine>:<sessionId>/<agentId>`, still split on `/` by the frontend); remote agents carry `machine`, `remote: true` and `share`. Local agents keep plain keys. A machine silent for 20s shows its agents as ended; it is dropped after 3h.
+- SSE `init` also carries `machines` (`null` unless `--hub`; `@local` is this PC) and `reporting` (`null` unless `--report-to`); `machines` and `reporting` events update them. The frontend's machine filter only hides agents (`state.agents` vs `state.allAgents`); `byKey` keeps all of them so events aren't lost. Remote agents have no Projects page link; the canvas groups them per machine. `remoteViewer()` (a non-loopback bind, or a request through an `--allowed-host` name) gets 404 from `/api/projects*` and SSE `init.projects: false`, which hides the Projects tab: the hub PC's own CLAUDE.md, MCP and hook setup isn't covered by any sharing level.
+- `test/remote.test.js` runs a real hub and a headless reporter against fake config dirs and checks that nothing above the sharing level reaches the hub.
+
 ### Transcript parsing (`server/parse.js`)
 
 - `Tail` reads a growing JSONL file incrementally from a byte offset (starting `initialBytes` from the end, dropping the first partial line) and resets if the file shrinks.
@@ -84,7 +93,7 @@ To support another agent with local logs, write a collector like `server/claude.
 
 ### Keys and slugs
 
-- An agent key is the `sessionId`; a subagent key is `<sessionId>/<agentId>`. The frontend relies on this split to attach subagents to their parent.
+- An agent key is the `sessionId`; a subagent key is `<sessionId>/<agentId>`. The frontend relies on this split to attach subagents to their parent. In hub mode, remote keys get a `<machine>:` prefix (machine names can't contain `/` or `:`).
 - Project folder names in `~/.claude/projects` are the cwd with every non-alphanumeric char replaced by `-`. This rule is implemented separately in `server/claude.js`, `server/projects.js` (`slug`), inline in `public/app.js` (link to the project page), and `projectIdOf` in `public/canvas.js` — keep them in sync.
 
 ### Frontend (`public/`)

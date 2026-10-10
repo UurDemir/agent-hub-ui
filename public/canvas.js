@@ -55,10 +55,11 @@ function flGroups(includeEnded) {
   const groups = new Map();
   for (const a of state.agents) {
     if (!a.live && !includeEnded) continue;
-    const root = projectRootOf(a.cwd);
-    const id = projectIdOf(root) || 'unknown';
+    // Another machine's agents form their own groups (and may only share the folder name).
+    const root = projectRootOf(a.cwd || (a.remote ? a.project : ''));
+    const id = a.remote ? `${a.machine}:${projectIdOf(root) || 'unknown'}` : projectIdOf(root) || 'unknown';
     const name = root.split(/[\\/]/).filter(Boolean).pop() || a.project || 'Unknown folder';
-    const g = groups.get(id) || { id, name, cwd: root, agents: [] };
+    const g = groups.get(id) || { id, name, cwd: root, machine: a.remote ? a.machine : '', agents: [] };
     g.agents.push(a);
     groups.set(id, g);
   }
@@ -227,11 +228,11 @@ function boxHTML(b) {
   const open = FL.open.has(e.id);
   return `<div class="fl-box-h"><b>${esc(e.label)}:</b> ${esc(e.summary)}</div>
     <div class="fl-box-m">${fmtTime(e.t)} ${st}</div>
-    ${open ? `<pre>${esc(e.detail)}</pre>${r && b.done ? `<pre class="res ${r.ok ? '' : 'err'}">${esc(r.text || '(no output)')}</pre>` : ''}` : ''}`;
+    ${open ? `<pre>${esc(e.detail ?? NOT_SHARED)}</pre>${r && b.done ? `<pre class="res ${r.ok ? '' : 'err'}">${esc(r.text ?? NOT_SHARED) || '(no output)'}</pre>` : ''}` : ''}`;
 }
 
 function bubbleHTML(b) {
-  const who = b.e.kind === 'say' ? 'CLAUDE' : b.node.isSub ? 'TASK' : 'YOU';
+  const who = b.e.kind === 'say' ? 'CLAUDE' : promptWho(b.e, b.node.a);
   return `<div class="fl-bubble-h">${who} · ${fmtTime(b.e.t)}</div><div class="fl-bubble-t">${esc(b.e.text)}</div>`;
 }
 
@@ -242,7 +243,9 @@ function overlayItems(m) {
   const items = [];
   for (const row of m.rows) {
     items.push({ key: `p:${row.g.id}`, cls: 'fl-row', x: row.x, y: row.y, anchor: 'left', opacity: row.fade,
-      html: `<b>${esc(row.g.name)}</b><span>${esc(row.g.cwd)}</span>${row.g.id !== 'unknown' ? `<a href="#/projects/${encodeURIComponent(row.g.id)}">setup →</a>` : ''}` });
+      html: row.g.machine
+        ? `<b>${esc(row.g.name)}</b><span>⌂ ${esc(row.g.machine)}${row.g.cwd !== row.g.name ? ` · ${esc(row.g.cwd)}` : ''}</span>`
+        : `<b>${esc(row.g.name)}</b><span>${state.machines ? `⌂ ${esc(state.host)} · ` : ''}${esc(row.g.cwd)}</span>${row.g.id !== 'unknown' && state.projectsOn ? `<a href="#/projects/${encodeURIComponent(row.g.id)}">setup →</a>` : ''}` });
   }
   for (const nd of m.nodes) {
     const sel = nd.key === FL.selected ? 'sel' : '';
@@ -519,7 +522,7 @@ function renderChrome() {
 
   // Project picker.
   const groups = flGroups(true);
-  const options = `<option value="">All projects</option>${groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)} (${g.agents.filter((a) => a.live).length} live)</option>`).join('')}`;
+  const options = `<option value="">All projects</option>${groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}${g.machine ? ` · ${esc(g.machine)}` : ''} (${g.agents.filter((a) => a.live).length} live)</option>`).join('')}`;
   const pick = $('#fl-pick');
   if (pick._html !== options) { pick.innerHTML = options; pick._html = options; }
   pick.value = FL.project || '';
@@ -566,7 +569,7 @@ function renderPanel(agents, sel) {
       const evs = eventsAt(sel.key, nowT()).slice(-80);
       html = `<div class="fl-p-h"><b>${esc(sel.isSub ? sel.a.type : sel.a.name)}</b><a href="#/live/${encodeURIComponent(sel.key)}">open ↗</a></div><div class="fl-chat">${evs.map((e) => {
         if (e.kind === 'tool') return `<div class="fl-c-tool c-${e.cat}"><span class="chip">${esc(e.label)}</span>${esc(e.summary)}${e.result ? (e.result.ok ? ' <i class="ok">✓</i>' : ' <i class="err">✗</i>') : ''}</div>`;
-        if (e.kind === 'say' || e.kind === 'prompt') return `<div class="fl-c-msg ${e.kind}"><b>${e.kind === 'say' ? 'CLAUDE' : promptWho(e, sel.isSub)}</b> ${esc(e.text)}</div>`;
+        if (e.kind === 'say' || e.kind === 'prompt') return `<div class="fl-c-msg ${e.kind}"><b>${e.kind === 'say' ? 'CLAUDE' : promptWho(e, sel.a)}</b> ${esc(e.text)}</div>`;
         return `<div class="fl-c-note">${esc(e.text)}</div>`;
       }).join('') || '<div class="fl-none">No activity recorded yet.</div>'}</div>`;
     }
