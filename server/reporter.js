@@ -114,7 +114,10 @@ export class Reporter extends EventEmitter {
         return;
       }
       const why = res.body?.error || `HTTP ${res.status}`;
-      if (res.status === 401) this.fail(`The hub rejected this machine's key (${why})`, 60e3);
+      // The ingest port always answers JSON; a dashboard answers a login prompt (401) or 404 instead.
+      if (!res.body && (res.status === 401 || res.status === 404)) {
+        this.fail(`${this.url.origin} isn't a hub's ingest port (${why}). If that's the hub's dashboard, report to its ingest port instead (default 4318).`, 60e3);
+      } else if (res.status === 401) this.fail(`The hub rejected this machine's key (${why})`, 60e3);
       else if (res.status === 409) this.fail(why, 15e3);
       else this.fail(`The hub refused the report: ${why}`);
     } catch (e) {

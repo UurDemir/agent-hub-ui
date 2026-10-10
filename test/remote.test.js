@@ -125,6 +125,23 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
   assert.match(pc.log, /Reporting this machine's agents to http:\/\/127\.0\.0\.1:\d+ \(sharing: metadata\)/);
 });
 
+test('a reporter pointed at a dashboard port says so instead of blaming the key', async () => {
+  // What a hub dashboard with --viewer-password answers: a plain-text login prompt.
+  const dashboard = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Agent Hub"' }).end('Login required');
+  });
+  await new Promise((r) => dashboard.listen(0, '127.0.0.1', r));
+  after(() => dashboard.close());
+  const pc = start({
+    CLAUDE_CONFIG_DIR: path.join(tmp, 'pc-claude'), AGENT_HUB_HEADLESS: '1',
+    AGENT_HUB_REPORT_TO: `http://127.0.0.1:${dashboard.address().port}`, AGENT_HUB_REPORT_KEY: 'ahk_whatever',
+  });
+  await waitFor(() => /isn't a hub's ingest port \(HTTP 401\).*ingest port instead/.test(pc.log), `the reporter's hint\n${pc.log}`);
+  assert.doesNotMatch(pc.log, /rejected this machine's key/);
+  pc.kill();
+});
+
 test('only a real loopback address counts as this machine for plain http', () => {
   assert.equal(ingestUrl('http://127.0.0.1:4318').href, 'http://127.0.0.1:4318/ingest');
   assert.equal(ingestUrl('https://hub.example.com/agent-hub').href, 'https://hub.example.com/agent-hub/ingest');
