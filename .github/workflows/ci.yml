@@ -26,3 +26,4 @@ jobs:
           npm pack
           npx --yes --package ./agent-hub-ui-*.tgz agent-hub-ui --version
           npx --yes --package ./agent-hub-ui-*.tgz agent-hub-ui --help
+          npx --yes --package ./agent-hub-ui-*.tgz agent-hub-ui --new-key ci-smoke

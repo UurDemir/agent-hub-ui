@@ -16,8 +16,14 @@ const store = {
 };
 
 const state = {
-  agents: [],
+  agents: [],                // shown agents (all, or one machine's in hub mode)
+  allAgents: [],
   others: [],
+  machines: null,            // hub mode: [{ id, name, online, share, … }]; '@local' is this PC
+  machine: store.get('machine', ''), // machine filter, '' = all
+  reporting: null,           // this PC reports to a hub: { to, share, state, error }
+  host: '',
+  projectsOn: true,          // false for viewers coming through a proxy or the network
   byKey: new Map(),          // agent or subagent key -> summary (subagents get .parent)
   events: new Map(),         // key -> events[]
   seen: new Map(),           // key -> Set(event id)
@@ -77,7 +83,8 @@ async function unlockSending() {
 
 const $ = (s) => document.querySelector(s);
 // Who wrote a prompt: you, you through Agent Hub's message box, another session, or a subagent's task.
-const promptWho = (e, isSub) => (isSub ? 'TASK' : e.from === 'agent-hub' ? 'YOU · HUB' : e.from ? 'SESSION' : 'YOU');
+// `a` is the agent or subagent; on a hub, prompts typed on another machine are a USER's.
+const promptWho = (e, a) => (a.parent ? 'TASK' : e.from === 'agent-hub' ? 'YOU · HUB' : e.from ? 'SESSION' : a.remote ? 'USER' : 'YOU');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function fmtDur(ms) {
@@ -99,6 +106,9 @@ function shortModel(m) {
   const x = /claude-(\w+)-(\d+)-(\d+)/.exec(m || '');
   return x ? `${x[1][0].toUpperCase()}${x[1].slice(1)} ${x[2]}.${x[3]}` : (m || '—');
 }
+// Hub mode: which machine an agent runs on. Agents of this PC have no `machine`.
+const machineOf = (a) => (a.parent ? a.parent : a).machine || '@local';
+const machineName = (a) => (a.parent ? a.parent : a).machine || state.host;
 function nowText(a) {
   const n = a.now || {};
   if (n.cat === 'mcp') return [n.label, n.summary].filter(Boolean).join(' · ');
@@ -132,7 +142,9 @@ function addEvents(key, events) {
 
 function setAgents(agents) {
   agents.sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.lastAt - a.lastAt));
-  state.agents = agents;
+  state.allAgents = agents;
+  // Filtering by machine only hides cards; every agent stays in byKey so its events are kept.
+  state.agents = state.machines && state.machine ? agents.filter((a) => machineOf(a) === state.machine) : agents;
   state.byKey = new Map();
   for (const a of agents) {
     state.byKey.set(a.key, a);
@@ -148,10 +160,25 @@ function setAgents(agents) {
     }
     state.prevStatus.set(a.key, a.status);
   }
-  if (!state.selected || !state.byKey.has(state.selected)) {
-    state.selected = agents.find((a) => a.status === 'working')?.key || agents[0]?.key || null;
+  const shown = state.byKey.get(state.selected);
+  if (!shown || !state.agents.includes(shown.parent || shown)) {
+    state.selected = state.agents.find((a) => a.status === 'working')?.key || state.agents[0]?.key || null;
   }
   renderAll();
+}
+
+function setMachines(machines) {
+  state.machines = machines;
+  if (state.machine && !machines?.some((m) => m.id === state.machine)) state.machine = '';
+  renderMachines();
+}
+
+function pickMachine(id) {
+  state.machine = id;
+  store.set('machine', id);
+  setAgents(state.allAgents);
+  renderMachines();
+  renderOthers();
 }
 
 /* ---------------- header ---------------- */
@@ -166,7 +193,7 @@ function renderCounters() {
     <span class="ctr waiting ${waiting ? 'hot' : ''}"><b>${waiting}</b> need you</span>
     <span class="ctr"><b>${count('idle')}</b> idle</span>
     <span class="ctr"><b>${subs}</b> subagents active</span>
-    <span class="ctr"><b>${state.others.length}</b> other tools</span>`;
+    <span class="ctr"><b>${visibleOthers().length}</b> other tools</span>`;
   const w = count('working');
   document.title = `${waiting ? '⚠ ' : ''}${w ? `(${w}) ` : ''}Agent Hub`;
 }
@@ -174,7 +201,58 @@ function renderCounters() {
 function setConn(on, host) {
   $('#conn').classList.toggle('on', on);
   $('#conn span').textContent = on ? 'live' : 'reconnecting';
-  if (host) $('#host').textContent = host;
+  if (host) state.host = host;
+  renderHost();
+}
+
+function renderHost() {
+  const ms = state.machines;
+  $('#host').textContent = ms
+    ? `${state.host} · hub · ${ms.filter((m) => m.online).length}/${ms.length} machines online`
+    : state.host || 'connecting…';
+}
+
+/* ---------------- hub: machines and reporting ---------------- */
+
+const NOT_SHARED = '(not shared by that machine)';
+const SHARE_NOTE = {
+  metadata: 'Shared at the metadata level: no prompts, replies, titles or tool details leave that machine.',
+  activity: 'Shared at the activity level: tool summaries and plans, but no prompts, replies or tool output.',
+};
+
+function renderMachines() {
+  const ms = state.machines;
+  const pick = $('#machine-pick');
+  pick.hidden = !ms;
+  $('#machines-h').hidden = !ms;
+  $('#machines').hidden = !ms;
+  $('#others-h').textContent = ms ? 'Other AI tools' : 'Other AI tools on this PC';
+  renderHost();
+  if (!ms) return;
+  const options = `<option value="">All machines</option>${ms.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}${m.local ? ' (this PC)' : m.online ? '' : ' (offline)'}</option>`).join('')}`;
+  if (pick._html !== options) { pick.innerHTML = options; pick._html = options; }
+  pick.value = state.machine;
+  const liveOn = (id) => state.allAgents.filter((a) => a.live && machineOf(a) === id).length;
+  $('#machines').innerHTML = ms.map((m) => `
+    <div class="other machine ${state.machine === m.id ? 'on' : ''}" data-machine="${esc(m.id)}" title="${esc(m.local ? 'This PC' : `${m.host || ''} · agent-hub-ui ${m.version || '?'}`)}">
+      <span class="dot ${!m.online ? '' : liveOn(m.id) ? 's-working' : 's-idle'}"></span>
+      <div><div class="nm">${esc(m.name)}${m.local ? ' <span class="tag">this PC</span>' : ''}</div>
+      <div class="m">${liveOn(m.id)} running${m.local ? '' : ` · ${esc(m.share || '')}`}${m.online ? '' : ` · offline, last seen <span data-since="${Number(m.lastSeen) || 0}"></span> ago`}</div></div>
+    </div>`).join('');
+}
+
+function renderReporting() {
+  const r = state.reporting;
+  const el = $('#reporting');
+  el.hidden = !r;
+  if (!r) return;
+  el.className = `reporting ${r.state === 'ok' ? 'ok' : r.state === 'error' ? 'err' : ''}`;
+  el.textContent = `Reporting to ${r.to.replace(/^https?:\/\//, '')} · ${r.share}`;
+  el.title = r.state === 'error' ? r.error : `This PC sends its agents' activity to a hub at the "${r.share}" level.`;
+}
+
+function visibleOthers() {
+  return state.machines && state.machine ? state.others.filter((o) => (o.machine || '@local') === state.machine) : state.others;
 }
 
 /* ---------------- cards ---------------- */
@@ -191,7 +269,7 @@ function cardHTML(a) {
       <span title="Last activity">${a.lastAt ? `<span data-since="${a.lastAt}"></span> ago` : ''}</span>
     </div>
     <h3 title="${esc(a.title || a.name)}">${esc(a.name)}</h3>
-    <div class="where"><span title="${esc(a.cwd)}">${esc(a.project || '—')}</span>${a.branch ? `<span class="branch">⎇ ${esc(a.branch)}</span>` : ''}</div>
+    <div class="where">${state.machines ? `<span class="machine" title="Machine">⌂ ${esc(machineName(a))}</span>` : ''}<span title="${esc(a.cwd)}">${esc(a.project || '—')}</span>${a.branch ? `<span class="branch">⎇ ${esc(a.branch)}</span>` : ''}</div>
     <div class="now c-${n.cat || 'other'}">
       <span class="verb">${esc(n.verb || '')}</span>
       <span class="what" title="${esc(nowText(a))}">${esc(nowText(a))}</span>
@@ -228,11 +306,12 @@ function pulse(key) {
 }
 
 function renderOthers() {
-  $('#others').innerHTML = state.others.length
-    ? state.others.map((o) => `
+  const others = visibleOthers();
+  $('#others').innerHTML = others.length
+    ? others.map((o) => `
       <div class="other" title="${esc(o.cmd)}">
         <span class="dot s-idle"></span>
-        <div><div class="nm">${esc(o.label)}</div>
+        <div><div class="nm">${esc(o.label)}${state.machines ? ` <span class="tag">${esc(o.machine || state.host)}</span>` : ''}</div>
         <div class="m">${o.pids.length} process${o.pids.length > 1 ? 'es' : ''} · ${fmtBytes(o.memory)}${o.startedAt ? ` · up <span data-since="${o.startedAt}"></span>` : ''}</div></div>
       </div>`).join('')
     : '<span class="none">None running. Watching for Cursor, Windsurf, Copilot CLI, Codex CLI, Gemini CLI, Aider, opencode, Goose, Claude Desktop, Ollama and LM Studio.</span>';
@@ -271,7 +350,9 @@ function renderLanes() {
     if (!el) continue;
     el.classList.toggle('sel', r.key === state.selected);
     el.querySelector('.dot').className = `dot s-${r.a.status}`;
-    el.querySelector('.lane-name').textContent = r.sub ? `${r.a.type}${r.a.description ? ' · ' + r.a.description : ''}` : r.a.name;
+    el.querySelector('.lane-name').textContent = r.sub
+      ? `${r.a.type}${r.a.description ? ' · ' + r.a.description : ''}`
+      : `${state.machines ? `${machineName(r.a)} · ` : ''}${r.a.name}`;
     const n = r.a.now || {};
     el.querySelector('.lane-now').textContent = `${n.verb || ''} ${nowText(r.a)}`.trim();
   }
@@ -368,7 +449,7 @@ function laneTip(ev) {
     const st = r ? `${r.ok ? 'done' : 'failed'} in ${fmtMs(r.ms)}` : 'running';
     tip.innerHTML = `<b style="color:${CAT_COLOR[e.cat]}">${esc(e.label)}</b> ${esc(e.summary)}<div class="m">${fmtTime(e.t)} · ${st}</div>`;
   } else {
-    tip.innerHTML = `<b>${e.kind === 'prompt' ? (e.from ? promptWho(e) : 'You') : 'Agent'}</b> ${esc(e.text.slice(0, 220))}<div class="m">${fmtTime(e.t)}</div>`;
+    tip.innerHTML = `<b>${e.kind === 'prompt' ? promptWho(e, state.byKey.get(cv.parentElement?.dataset.key) || {}) : 'Agent'}</b> ${esc(e.text.slice(0, 220))}<div class="m">${fmtTime(e.t)}</div>`;
   }
   tip.hidden = false;
   const r = tip.getBoundingClientRect();
@@ -398,7 +479,9 @@ function detailHeadHTML(a) {
       ${a.status === 'working' && n.since ? `<span class="timer" data-since="${n.since}"></span>` : ''}
     </div>
     <dl class="kv">
-      ${isSub || !a.cwd ? '' : `<dt>Folder</dt><dd title="${esc(a.cwd)}"><a href="#/projects/${encodeURIComponent(a.cwd.replace(/[^a-zA-Z0-9]/g, '-'))}">${esc(a.cwd)}</a></dd>`}
+      ${!isSub && state.machines ? kv('Machine', machineName(a)) : ''}
+      ${isSub || !a.cwd || a.remote || !state.projectsOn ? '' : `<dt>Folder</dt><dd title="${esc(a.cwd)}"><a href="#/projects/${encodeURIComponent(a.cwd.replace(/[^a-zA-Z0-9]/g, '-'))}">${esc(a.cwd)}</a></dd>`}
+      ${!isSub && (a.remote || !state.projectsOn) ? kv('Folder', a.cwd || a.project) : ''}
       ${isSub ? '' : kv('Branch', a.branch)}
       ${kv('Model', a.model)}
       <dt>Context</dt><dd>${fmtK(a.context)} tokens</dd>
@@ -407,6 +490,7 @@ function detailHeadHTML(a) {
       ${!isSub && a.pid ? kv('Process', `pid ${a.pid}${a.version ? ' · v' + a.version : ''}`) : ''}
       ${!isSub ? kv('Session', a.sessionId) : ''}
     </dl>
+    ${(a.parent || a).remote && SHARE_NOTE[(a.parent || a).share] ? `<div class="share-note">${esc(SHARE_NOTE[(a.parent || a).share])}</div>` : ''}
     ${!isSub && a.prs?.length ? `<div class="chips">${a.prs.map((p) => `<a class="chip-sub" href="${esc(safeUrl(p.url))}" target="_blank" rel="noopener">PR #${esc(p.number)}</a>`).join('')}</div>` : ''}
   </div>`;
 
@@ -446,14 +530,14 @@ function eventHTML(e, a) {
           : '<span class="ev-st">—</span>';
       return `<div class="ev ev-tool c-${e.cat}" data-id="${esc(e.id)}">
         <div class="ev-row">${time}<span class="chip">${esc(e.label)}</span><span class="ev-sum">${esc(e.summary)}</span>${st}</div>
-        ${open ? `<pre>${esc(e.detail)}</pre>${r ? `<pre class="res ${r.ok ? '' : 'err'}">${esc(r.text || '(no output)')}</pre>` : ''}` : ''}
+        ${open ? `<pre>${esc(e.detail ?? NOT_SHARED)}</pre>${r ? `<pre class="res ${r.ok ? '' : 'err'}">${esc(r.text ?? NOT_SHARED) || '(no output)'}</pre>` : ''}` : ''}
       </div>`;
     }
     case 'say':
       return `<div class="ev ev-say"><div class="ev-row">${time}</div>
         <div class="body ${state.expanded.has(e.id) ? '' : 'clamp'}" data-id="${esc(e.id)}">${esc(e.text)}</div></div>`;
     case 'prompt':
-      return `<div class="ev ev-prompt"><div class="ev-row"><span class="who">${promptWho(e, !!a.parent)}</span>${time}</div>
+      return `<div class="ev ev-prompt"><div class="ev-row"><span class="who">${promptWho(e, a)}</span>${time}</div>
         <div class="body">${esc(e.text)}</div></div>`;
     case 'pr':
       return `<div class="ev ev-pr"><div class="ev-row">${time}<a href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener">${esc(e.text)}</a></div></div>`;
@@ -594,11 +678,18 @@ function connect() {
     state.sendToken = state.sendEpoch && saved?.epoch === state.sendEpoch ? saved.token : null;
     if (unlockCode && state.sendEpoch && !state.sendToken) unlockSending();
     for (const host of document.querySelectorAll('#compose, #fl-compose')) delete host.dataset.sig;
-    renderOthers();
+    state.reporting = d.reporting || null;
+    state.projectsOn = d.projects !== false;
+    $('#tabs a[data-view="projects"]').hidden = !state.projectsOn;
+    renderReporting();
     setConn(true, d.host);
+    setMachines(d.machines || null);
+    renderOthers();
     setAgents(d.agents);
   });
-  es.addEventListener('agents', (m) => setAgents(JSON.parse(m.data)));
+  es.addEventListener('agents', (m) => { setAgents(JSON.parse(m.data)); if (state.machines) renderMachines(); });
+  es.addEventListener('machines', (m) => { setMachines(JSON.parse(m.data)); setAgents(state.allAgents); });
+  es.addEventListener('reporting', (m) => { state.reporting = JSON.parse(m.data); renderReporting(); });
   es.addEventListener('events', (m) => {
     const { key, events } = JSON.parse(m.data);
     addEvents(key, events);
@@ -628,6 +719,8 @@ for (const b of document.querySelectorAll('#range button')) {
 }
 
 document.addEventListener('click', (ev) => {
+  const machine = ev.target.closest('[data-machine]');
+  if (machine) return pickMachine(state.machine === machine.dataset.machine ? '' : machine.dataset.machine);
   const sel = ev.target.closest('[data-select]');
   if (sel) return select(sel.dataset.select);
   const card = ev.target.closest('.card, .lane');
@@ -652,6 +745,7 @@ document.addEventListener('keydown', (ev) => {
   sendMessage(ev.target.form);
 });
 
+$('#machine-pick').addEventListener('change', (ev) => pickMachine(ev.target.value));
 $('#lanes').addEventListener('mousemove', laneTip);
 $('#lanes').addEventListener('mouseleave', () => { $('#tip').hidden = true; });
 
