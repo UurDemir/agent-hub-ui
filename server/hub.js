@@ -23,23 +23,30 @@ export function newMachineKey(name) {
 
 // The hub's keys file: { "machines": [{ "name", "sha256", "share"? }] }. Only hashes are stored.
 // `share` caps what the hub keeps from that machine. The file is re-read when it changes, so
-// removing an entry revokes that machine without a restart.
+// removing an entry revokes that machine without a restart. `inline` is the same JSON given
+// directly ($AGENT_HUB_MACHINES, for containers configured through a form); it is fixed until restart.
 export class Keyring {
-  constructor(file) {
+  constructor(file, inline) {
     this.file = file;
     this.entries = [];
     this.mtime = -1;
     this.checkedAt = 0;
-    this.read(fs.statSync(file).mtimeMs); // a missing or broken file fails at startup
+    if (inline != null) this.load(inline, 'AGENT_HUB_MACHINES');
+    else this.read(fs.statSync(file).mtimeMs); // a missing or broken file fails at startup
   }
 
   read(mtime) {
-    const j = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+    this.load(fs.readFileSync(this.file, 'utf8'), this.file);
+    this.mtime = mtime;
+  }
+
+  load(text, source) {
+    const j = JSON.parse(text);
     const list = Array.isArray(j) ? j : j?.machines;
-    if (!Array.isArray(list)) throw new Error(`${this.file}: expected { "machines": [...] }`);
+    if (!Array.isArray(list)) throw new Error(`${source}: expected { "machines": [...] }`);
     const names = new Set();
     this.entries = list.map((e, i) => {
-      const where = `${this.file}: machines[${i}]`;
+      const where = `${source}: machines[${i}]`;
       if (!NAME_RE.test(e?.name || '')) throw new Error(`${where}: invalid name`);
       if (names.has(e.name)) throw new Error(`${where}: duplicate name "${e.name}"`);
       if (!/^[0-9a-f]{64}$/i.test(e.sha256 || '')) throw new Error(`${where}: "sha256" must be the 64-hex-digit hash printed by --new-key`);
@@ -47,11 +54,10 @@ export class Keyring {
       names.add(e.name);
       return { name: e.name, hash: Buffer.from(e.sha256, 'hex'), share: e.share || 'full' };
     });
-    this.mtime = mtime;
   }
 
   refresh() {
-    if (Date.now() - this.checkedAt < 2000) return;
+    if (!this.file || Date.now() - this.checkedAt < 2000) return;
     this.checkedAt = Date.now();
     try {
       const { mtimeMs } = fs.statSync(this.file);

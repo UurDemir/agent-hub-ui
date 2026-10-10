@@ -13,6 +13,7 @@ Options:
   -p, --port <port>          Port to listen on (default 4317, or $PORT)
       --host <host>          Address to bind (default 127.0.0.1, or $HOST).
                              Transcripts contain your code and prompts, so keep it local.
+                             Any other address needs --viewer-password.
       --no-open              Don't open the browser
       --allow-send           Let the dashboard send messages to running Claude Code
                              sessions on this PC (through Claude Code's local messaging
@@ -39,6 +40,7 @@ Run a hub that shows agents from many machines:
       --hub                  Accept reports from the machines in the keys file
       --hub-keys <file>      Keys file: { "machines": [{ "name", "sha256", "share"? }] }
                              Re-read on change; remove an entry to revoke a machine.
+                             (or put the same JSON in $AGENT_HUB_MACHINES, e.g. in a container)
       --new-key <name>       Print a new machine key and its keys-file entry, then exit
       --ingest-port <port>   Port reporters send to (default 4318)
       --ingest-host <host>   Address for the ingest port (default 0.0.0.0)

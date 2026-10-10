@@ -25,7 +25,7 @@ const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.met
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const isLoopback = (h) => h === 'localhost' || /^127(\.\d{1,3}){3}$/.test(h) || /^(::1|::ffff:127\.[\d.]+)$/i.test(h);
 // Blocks DNS rebinding: a web page whose domain resolves to 127.0.0.1 could otherwise read the API.
-// Enforced for any loopback bind; binding elsewhere (HOST=0.0.0.0) is an explicit opt-out.
+// Enforced for any loopback bind; binding elsewhere (HOST=0.0.0.0) needs --viewer-password instead.
 // --allowed-host adds names a reverse proxy in front of the dashboard sends.
 const LOOPBACK = isLoopback(HOST);
 const EXTRA_HOSTS = (env.AGENT_HUB_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
@@ -65,17 +65,21 @@ const HUB = env.AGENT_HUB_HUB === '1';
 const VIEWER_PASSWORD = env.AGENT_HUB_VIEWER_PASSWORD || '';
 const viewerHash = VIEWER_PASSWORD && digest(VIEWER_PASSWORD);
 
-if (HUB && !env.AGENT_HUB_KEYS) die('--hub needs --hub-keys <file>: the machines allowed to report. Create entries with --new-key <name>.');
+if (HUB && !env.AGENT_HUB_KEYS && !env.AGENT_HUB_MACHINES) die('--hub needs --hub-keys <file>: the machines allowed to report. Create entries with --new-key <name>.');
 if (HUB && !LOOPBACK && !VIEWER_PASSWORD) {
   die(`--hub shows every reporting machine's activity, so the dashboard can't listen on ${HOST} without a login.
 Keep --host 127.0.0.1 and put it behind your SSO reverse proxy (pass the public name with --allowed-host),
 or set --viewer-password.`);
 }
+if (!HUB && !HEADLESS && !LOOPBACK && !VIEWER_PASSWORD) {
+  die(`The dashboard shows your transcripts (code and prompts), so it can't listen on ${HOST} without a login.
+Keep --host 127.0.0.1, or set --viewer-password.`);
+}
 if (HEADLESS && !env.AGENT_HUB_REPORT_TO) die('--headless only makes sense with --report-to <hub url>.');
 
 let keyring = null;
 if (HUB) {
-  try { keyring = new Keyring(env.AGENT_HUB_KEYS); } catch (e) { die(`--hub-keys: ${e.message}`); }
+  try { keyring = new Keyring(env.AGENT_HUB_KEYS, env.AGENT_HUB_KEYS ? undefined : env.AGENT_HUB_MACHINES); } catch (e) { die(`--hub-keys: ${e.message}`); }
 }
 
 let reportUrl = null;

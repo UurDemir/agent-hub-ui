@@ -1,0 +1,5 @@
+*
+!package.json
+!bin/
+!server/
+!public/

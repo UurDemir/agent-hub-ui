@@ -27,3 +27,21 @@ jobs:
           npx --yes --package ./agent-hub-ui-*.tgz agent-hub-ui --version
           npx --yes --package ./agent-hub-ui-*.tgz agent-hub-ui --help
           npx --yes --package ./agent-hub-ui-*.tgz agent-hub-ui --new-key ci-smoke
+
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t agent-hub-ui:ci .
+      # A hub needs its machines and a viewer password; check it starts with both.
+      - name: Smoke-test the image as a hub
+        run: |
+          entry=$(docker run --rm agent-hub-ui:ci --new-key ci-smoke | grep -o '{"name".*}')
+          docker run -d --name hub -p 4317:4317 -e AGENT_HUB_HUB=1 -e AGENT_HUB_VIEWER_PASSWORD=ci \
+            -e "AGENT_HUB_MACHINES={\"machines\":[$entry]}" agent-hub-ui:ci
+          sleep 3
+          docker logs hub
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u x:ci http://127.0.0.1:4317/api/agents)" = 200

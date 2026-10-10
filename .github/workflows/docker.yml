@@ -1,0 +1,45 @@
+# Publishes the container image (see Dockerfile) to ghcr.io/uurdemir/agent-hub-ui when a GitHub
+# release is published, tagged with the version (0.4.0) and `latest`. The TrueNAS app pins the
+# version tag. The package must be public on GitHub (Packages → agent-hub-ui → settings) so NAS
+# boxes can pull it without logging in.
+name: Docker
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check the release tag matches package.json
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          test "v$v" = "$TAG"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/uurdemir/agent-hub-ui:${{ steps.version.outputs.version }}
+            ghcr.io/uurdemir/agent-hub-ui:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.licenses=MIT

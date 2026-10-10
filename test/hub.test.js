@@ -102,3 +102,11 @@ test('keyring matches hashed keys and reloads when the file changes', () => {
   assert.throws(() => newMachineKey('a/b'));
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('keyring takes the machines inline, as from $AGENT_HUB_MACHINES', () => {
+  const a = newMachineKey('nas-pc');
+  const ring = new Keyring(undefined, JSON.stringify({ machines: [{ ...a.entry, share: 'metadata' }] }));
+  assert.equal(ring.match(a.key).share, 'metadata');
+  assert.equal(ring.match('ahk_wrong'), null);
+  assert.throws(() => new Keyring(undefined, '{"machines":{}}'), /AGENT_HUB_MACHINES: expected/);
+});

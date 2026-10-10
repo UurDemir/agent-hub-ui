@@ -23,7 +23,7 @@ It starts on http://127.0.0.1:4317 and opens your browser. Stop it with Ctrl+C.
 |---|---|
 | `--port <port>` | Use another port (default 4317) |
 | `--no-open` | Don't open the browser |
-| `--host <host>` | Address to bind (default `127.0.0.1`; keep it local, transcripts contain your code) |
+| `--host <host>` | Address to bind (default `127.0.0.1`; keep it local, transcripts contain your code. Any other address needs `--viewer-password`) |
 | `--allow-send` | Let the dashboard send messages to running Claude Code sessions (see [Messaging sessions](#messaging-sessions)) |
 
 To keep it around, install it globally with `npm install -g agent-hub-ui` and run `agent-hub`.
@@ -115,6 +115,26 @@ The hub keeps everything in memory: the last 200 events per session, like a norm
 | `--share <level>` | `metadata` (default), `activity` or `full` |
 | `--headless` | Don't serve the local dashboard |
 | `--allow-http` | Allow a plain-http hub on another machine |
+
+### Running the hub in a container (NAS, home server)
+
+Each release is also published as a container image, `ghcr.io/uurdemir/agent-hub-ui`, for running the hub on a NAS or server. A container can't see the host's Claude Code sessions, so it's only useful as a hub. Configure it with environment variables. `AGENT_HUB_MACHINES` takes the keys file's JSON directly, so no file has to be mounted:
+
+```yaml
+services:
+  agent-hub:
+    image: ghcr.io/uurdemir/agent-hub-ui:latest
+    environment:
+      AGENT_HUB_HUB: "1"
+      AGENT_HUB_VIEWER_PASSWORD: "pick-a-password"
+      AGENT_HUB_MACHINES: '{"machines":[{"name":"my-pc","sha256":"…from --new-key…"}]}'
+    ports:
+      - "4317:4317"   # dashboard
+      - "4318:4318"   # ingest
+    restart: unless-stopped
+```
+
+Machines in `AGENT_HUB_MACHINES` are read at startup, so revoking one means editing the variable and restarting the container (a mounted keys file with `AGENT_HUB_KEYS` is re-read on change instead). The image is only meant as a hub: don't mount a `~/.claude` into it. To serve the ingest port over HTTPS, mount a certificate and set `AGENT_HUB_TLS_CERT` and `AGENT_HUB_TLS_KEY`. Without one, machines report with `--allow-http`, so do that only on a network you trust or over a VPN.
 
 ## How it works
 
