@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { Tail, activity, clip, toolLabel } from './parse.js';
+import { Tail, activity, clip, summaryFields, toolLabel } from './parse.js';
 
 const ROOT = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 export const CODEX_DIR = {
@@ -96,14 +96,11 @@ function toolSummary(name, args, input) {
     case 'view_image': return base(args.path);
     case 'update_plan': return `${(args.plan || []).length} steps`;
     case 'spawn_agent': return args.agent_type || 'Subagent'; // the task itself is a prompt: detail only
-    case 'send_input': case 'send_message': case 'followup_task': case 'resume_agent': return 'Message to a subagent';
-    case 'request_user_input': return 'Question';
     case 'web_search': return args.query;
   }
-  // Summaries are shared from the activity level (details only at full), so other tools, including
-  // freeform custom tools, only get one of these plain fields.
-  const k = ['path', 'pattern', 'query'].find((x) => typeof args[x] === 'string');
-  return k ? firstLine(k === 'path' ? base(args[k]) : args[k]) : '';
+  // Other tools (MCP, messages to subagents, questions, freeform tools) get their first text
+  // argument, marked freeText so a hub only gets it at the full level (summaryFields in parse.js).
+  return null;
 }
 
 function toolDetail(name, args, input) {
@@ -248,7 +245,7 @@ export class CodexTranscript {
     const cat = codexCategory(name);
     const e = {
       kind: 'tool', toolId: String(id), name, label: toolLabel(name), cat,
-      summary: clip(toolSummary(name, args, input), 180), detail: clip(toolDetail(name, args, input), 1500),
+      ...summaryFields(toolSummary(name, args, input), input ?? args), detail: clip(toolDetail(name, args, input), 1500),
     };
     this.pending.set(e.toolId, { ...e, t });
     this.toolCount++;

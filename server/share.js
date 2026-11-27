@@ -38,12 +38,14 @@ const shape = (schema) => (v, level) => {
 const list = (fn, max) => (v, level) =>
   (Array.isArray(v) ? v.slice(0, max).map((x) => fn(x, level)).filter((x) => x != null) : []);
 
-const nowShape = shape({ verb: [M, S], cat: [M, oneOf(CATS, null)], label: [A, S], since: [M, num] });
+// freeText and nameFromPrompt go out at full, so a hub that lowers a machine's level (keys file
+// `share`) can still drop what they mark.
+const nowShape = shape({ verb: [M, S], cat: [M, oneOf(CATS, null)], label: [A, S], since: [M, num], freeText: [F, bool] });
 // At the activity level a summary is only sent when it describes a tool call; otherwise it is
 // Claude's last reply.
 const now = (v, level) => {
   const out = nowShape(v, level);
-  if (out && (level >= F || (level >= A && v.label))) out.summary = str(400)(v.summary);
+  if (out && (level >= F || (level >= A && v.label && v.freeText !== true))) out.summary = str(400)(v.summary);
   return out;
 };
 
@@ -67,7 +69,7 @@ const AGENT = shape({
   outTokens: [M, count], cost: [M, num], context: [M, count], toolCount: [M, count],
   startedAt: [M, num], lastAt: [M, num], job: [M, JOB], subagents: [M, list(SUB, 100)],
   name: [A, S], title: [A, str(2000)], branch: [A, S], todos: [A, list(TODO, 100)], prs: [A, list(PR, 50)],
-  cwd: [F, str(1000)], lastSay: [F, SAY], lastPrompt: [F, str(400)],
+  cwd: [F, str(1000)], lastSay: [F, SAY], lastPrompt: [F, str(400)], nameFromPrompt: [F, bool],
 });
 
 const COMMON = { id: [M, S], t: [M, num], kind: [M, S] };
@@ -77,7 +79,7 @@ const noteText = (v, level) => (level >= F ? str(400)(v) : FIXED_NOTES.includes(
 const EVENT = {
   tool: [M, shape({
     ...COMMON, toolId: [M, S], name: [M, S], label: [M, S], cat: [M, oneOf(CATS, 'other')],
-    summary: [A, str(200)], detail: [F, str(1600)],
+    summary: [A, str(200)], detail: [F, str(1600)], freeText: [F, bool],
   })],
   result: [M, shape({ ...COMMON, toolId: [M, S], ok: [M, bool], ms: [M, num], text: [F, str(1000)] })],
   note: [A, shape({ ...COMMON, text: [A, noteText] })],
@@ -108,7 +110,11 @@ export function shareEvents(events, level) {
   const out = [];
   for (const e of Array.isArray(events) ? events : []) {
     const rule = EVENT[e?.kind];
-    if (rule && r >= rule[0]) out.push(rule[1](e, r));
+    if (!rule || r < rule[0]) continue;
+    const s = rule[1](e, r);
+    // A summary taken from a tool's free-text argument (freeText) goes out only with the arguments.
+    if (s && e.freeText === true && r < F) delete s.summary;
+    if (s) out.push(s);
   }
   return out;
 }

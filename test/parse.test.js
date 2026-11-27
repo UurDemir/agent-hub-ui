@@ -187,3 +187,30 @@ test('messages delivered through the messaging socket become prompts with a send
   assert.deepEqual(tr.ingest(queued({ kind: 'user' })), []);
   assert.deepEqual(tr.ingest({ type: 'attachment', timestamp: T0, attachment: { type: 'other' } }), []);
 });
+
+test('a summary taken from a tool argument is marked and only shared at full', async () => {
+  const { shareAgents, shareEvents } = await import('../server/share.js');
+  const tr = new Transcript();
+  const evs = tr.ingest({ type: 'assistant', timestamp: '2026-11-27T10:00:00.000Z', uuid: 'a1', message: { id: 'm1', content: [
+    { type: 'tool_use', id: 't1', name: 'mcp__slack__post_message', input: { text: 'the launch slips to May', channel: 'C1' } },
+    { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/repo/src/app.js' } },
+  ] } });
+  const [mcp, read] = evs;
+  assert.equal(mcp.summary, 'the launch slips to May', 'shown in full on this machine');
+  assert.equal(mcp.freeText, true);
+  assert.equal(read.summary, 'app.js');
+  assert.equal(read.freeText, undefined);
+  const [m, r] = shareEvents(evs, 'activity');
+  assert.equal(m.summary, undefined);
+  assert.equal(r.summary, 'app.js', 'summaries written for a tool still go out at activity');
+  assert.equal('freeText' in m, false, 'the flag itself is not sent');
+  assert.equal(shareEvents(evs, 'full')[0].summary, 'the launch slips to May');
+
+  tr.pending.delete('t2'); // only the MCP call is still running
+  const now = activity(tr, 'working');
+  assert.equal(now.freeText, true, 'the card line inherits the flag from the running call');
+  const agent = { key: 'k', sessionId: 'abcdef123456', project: 'demo', name: 'demo', status: 'working', now, subagents: [] };
+  assert.equal(shareAgents([agent], 'activity')[0].now.summary, undefined);
+  assert.equal(shareAgents([agent], 'full')[0].now.summary, 'the launch slips to May');
+  assert.equal(shareAgents([{ ...agent, now: activity({ ...tr, pending: new Map([['t2', { ...read, t: 1 }]]) }, 'working') }], 'activity')[0].now.summary, 'app.js');
+});

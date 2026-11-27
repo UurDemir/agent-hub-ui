@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CodexCollector, CodexTranscript, headLine } from '../server/codex.js';
-import { shareAgents } from '../server/share.js';
+import { shareAgents, shareEvents } from '../server/share.js';
 
 // Synthetic records with the field names Codex writes (codex-rs protocol.rs / models.rs).
 const ROOT = '019ac5e2-0000-7000-8000-00000000a001';
@@ -55,9 +55,13 @@ test('turns a Codex rollout into prompt, tool, result and say events', () => {
     ['exec_command', 'run', 'npm test'],
     ['apply_patch', 'edit', 'sum.js'],
     ['update_plan', 'plan', '2 steps'],
-    ['mcp__github__list_issues', 'mcp', ''], // argument text stays in the detail (full only)
+    ['mcp__github__list_issues', 'mcp', 'acme/app'],
   ]);
   assert.equal(tools[3].label, 'github · list_issues');
+  assert.equal(tools[3].freeText, true, 'the summary is free text from the arguments');
+  assert.equal(shareEvents([tools[3]], 'activity')[0].summary, undefined, 'so a hub below full does not get it');
+  assert.equal(shareEvents([tools[3]], 'full')[0].summary, 'acme/app');
+  assert.equal(tools[0].freeText, undefined);
 
   const results = new Map(evs.filter((e) => e.kind === 'result').map((e) => [e.toolId, e]));
   assert.equal(results.get('call_A1').ok, false, 'exit code 1 is a failure');

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { OpenClawCollector, OpenClawTranscript } from '../server/openclaw.js';
-import { shareAgents } from '../server/share.js';
+import { shareAgents, shareEvents } from '../server/share.js';
 
 // Synthetic entries with the field names OpenClaw writes (pi session format: packages/agent-core,
 // packages/llm-core; the same JSON as a JSONL line or a transcript_events row).
@@ -40,9 +40,13 @@ test('turns OpenClaw transcript entries into events, without thinking or secrets
   assert.deepEqual(evs.filter((e) => e.kind === 'prompt').map((e) => e.text), ['Check the README and run the tests']);
   const tools = evs.filter((e) => e.kind === 'tool');
   assert.deepEqual(tools.map((e) => [e.name, e.cat, e.summary]), [
-    ['read', 'read', 'README.md'], ['exec', 'run', 'npm test'], ['mcp__github__list_issues', 'mcp', ''],
+    ['read', 'read', 'README.md'], ['exec', 'run', 'npm test'], ['mcp__github__list_issues', 'mcp', 'acme/app'],
   ]);
   assert.equal(tools[2].label, 'github · list_issues');
+  assert.equal(tools[2].freeText, true, 'the summary is free text from the arguments');
+  assert.equal(shareEvents([tools[2]], 'activity')[0].summary, undefined, 'so a hub below full does not get it');
+  assert.equal(shareEvents([tools[2]], 'full')[0].summary, 'acme/app');
+  assert.equal(tools[0].freeText, undefined);
   const results = new Map(evs.filter((e) => e.kind === 'result').map((e) => [e.toolId, e]));
   assert.equal(results.get('call_1').ok, true);
   assert.equal(results.get('call_2').ok, false);
