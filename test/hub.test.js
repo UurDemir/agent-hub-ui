@@ -239,3 +239,27 @@ test('a restarted hub applies the keys file before serving what it restored', ()
   assert.equal(b.archived('pc-1:s1').events['pc-1:s1'][0].detail, undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('an old reporter first kept at full is still treated as free text when lowered or restored lower', () => {
+  const a = agent({ name: 'fix the login bug', now: { verb: 'Calling', label: 'slack · post', summary: 'the launch slips', cat: 'mcp', since: 1 } });
+  const body = report({ version: '0.4.1', init: { agents: [a], others: [], events: { s1: [{ ...tool, summary: 'the launch slips' }] } } });
+  let cap = 'full';
+  const hub = new Hub({ levelFor: () => cap });
+  hub.ingest({ name: 'pc-1', share: 'full' }, body, 0);
+  assert.equal(hub.snapshot()[0].name, 'fix the login bug', 'at full everything is shared');
+  cap = 'activity';
+  hub.sweep(1000);
+  assert.equal(hub.snapshot()[0].name, 'app');
+  assert.equal(hub.snapshot()[0].now.summary, undefined);
+  assert.equal(hub.allEvents(200)['pc-1:s1'][0].summary, undefined);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-data-'));
+  const h1 = new Hub({ dataDir: dir });
+  h1.ingest({ name: 'pc-1', share: 'full' }, body);
+  h1.save();
+  const h2 = new Hub({ dataDir: dir, levelFor: () => 'activity' });
+  h2.load();
+  assert.equal(h2.snapshot()[0].name, 'app');
+  assert.equal(h2.allEvents(200)['pc-1:s1'][0].summary, undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

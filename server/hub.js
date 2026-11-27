@@ -203,17 +203,21 @@ export class Hub extends EventEmitter {
   }
 
   lowerLevel(m, level) {
+    // Data an old reporter sent at full has no freeText / nameFromPrompt marks.
+    const legacy = level !== 'full' && versionBelow(m.version, MIN_REPORTER);
+    const mark = (a) => (legacy ? distrustAgents([a])[0] : a);
+    const markEvents = (evs) => (legacy ? distrustEvents(evs) : evs);
     const again = (a) => {
-      const [x] = shareAgents([a], level);
+      const [x] = shareAgents([mark(a)], level);
       return x && { ...x, subagents: x.subagents.map((s) => ({ ...s })), machine: m.name, remote: true, share: level };
     };
     m.agents = m.agents.map(again).filter(Boolean);
-    for (const [k, evs] of m.events) m.events.set(k, shareEvents(evs, level));
+    for (const [k, evs] of m.events) m.events.set(k, shareEvents(markEvents(evs), level));
     m.others = shareOthers(m.others, level).map((o) => ({ ...o, machine: m.name }));
     for (const [k, x] of m.archive) {
       const agent = again(x.agent);
       if (!agent) { m.archive.delete(k); continue; }
-      m.archive.set(k, { ...x, agent, events: Object.fromEntries(Object.entries(x.events).map(([ek, evs]) => [ek, shareEvents(evs, level)])) });
+      m.archive.set(k, { ...x, agent, events: Object.fromEntries(Object.entries(x.events).map(([ek, evs]) => [ek, shareEvents(markEvents(evs), level)])) });
     }
     m.share = level;
     this.dirty = true;
@@ -290,11 +294,13 @@ export class Hub extends EventEmitter {
       const level = minLevel(s.share, levelOf(this.levelFor?.(s.name)) || s.share);
       const prefix = `${s.name}:`;
       const mine = (k) => typeof k === 'string' && k.startsWith(prefix);
-      const restore = (list) => shareAgents(Array.isArray(list) ? list : [], level)
+      // Stored at full from an old reporter, restored lower: mark it as ingest() would have.
+      const legacy = level !== 'full' && versionBelow(String(s.version ?? ''), MIN_REPORTER);
+      const restore = (list) => shareAgents(Array.isArray(list) ? (legacy ? distrustAgents(list) : list) : [], level)
         .filter((a) => mine(a.key))
         .map((a) => ({ ...a, subagents: a.subagents.filter((x) => mine(x.key)), machine: s.name, remote: true, share: level }));
       const eventsOf = (pairs) => new Map((Array.isArray(pairs) ? pairs : [])
-        .filter((p) => Array.isArray(p) && mine(p[0])).map(([k, evs]) => [k, shareEvents(evs, level).slice(-MAX_EVENTS)]));
+        .filter((p) => Array.isArray(p) && mine(p[0])).map(([k, evs]) => [k, shareEvents(legacy ? distrustEvents(evs) : evs, level).slice(-MAX_EVENTS)]));
       const m = {
         name: s.name, instance: null, seq: -1, online: false, share: level,
         host: String(s.host ?? '').slice(0, 100), version: String(s.version ?? '').slice(0, 30),
