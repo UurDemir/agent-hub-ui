@@ -85,7 +85,7 @@ const $ = (s) => document.querySelector(s);
 // Who wrote a prompt: you, you through Agent Hub's message box, another session, or a subagent's task.
 // `a` is the agent or subagent; on a hub, prompts typed on another machine are a USER's.
 // Which tool runs an agent: Claude Code sessions have no kind or a Claude Code one (bg, interactive…).
-const TOOL_KINDS = { codex: 'CODEX', openclaw: 'OPENCLAW' };
+const TOOL_KINDS = { codex: 'CODEX', openclaw: 'OPENCLAW', gemini: 'GEMINI', copilot: 'COPILOT', opencode: 'OPENCODE' };
 const toolKind = (a) => (Object.hasOwn(TOOL_KINDS, (a.parent || a).kind) ? (a.parent || a).kind : null);
 const isOtherTool = (a) => !!toolKind(a); // not Claude Code: no Projects page for its folder
 const agentWho = (a) => TOOL_KINDS[toolKind(a)] || 'CLAUDE';
@@ -296,7 +296,7 @@ function cardHTML(a) {
 function renderCards() {
   const live = state.agents.filter((a) => a.live);
   const ended = state.agents.filter((a) => !a.live);
-  $('#cards').innerHTML = live.length ? live.map(cardHTML).join('') : '<div class="others"><span class="none">No Claude Code, Codex or OpenClaw sessions are running right now.</span></div>';
+  $('#cards').innerHTML = live.length ? live.map(cardHTML).join('') : '<div class="others"><span class="none">No agent sessions are running right now.</span></div>';
   $('#recent').innerHTML = ended.map(cardHTML).join('');
   $('#recent-h').hidden = !ended.length;
   $('#floor-count').textContent = `${live.length} running`;

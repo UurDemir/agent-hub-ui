@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { ClaudeCollector, DIR } from './claude.js';
 import { CodexCollector } from './codex.js';
 import { OpenClawCollector } from './openclaw.js';
+import { GeminiCollector } from './gemini.js';
+import { CopilotCollector } from './copilot.js';
 import { Sources } from './sources.js';
 import { metrics } from './metrics.js';
 import { Notifier } from './notify.js';
@@ -102,9 +104,13 @@ const procs = new ProcessScanner();
 const runs = (id) => () => procs.others.some((o) => o.id === id);
 const codex = new CodexCollector({ running: runs('codex') });
 const openclaw = new OpenClawCollector({ running: runs('openclaw') });
-const sources = new Sources([claude, codex, openclaw]);
-// Codex and OpenClaw are listed with the other AI tools only while none of their sessions shows up as an agent.
-const localOthers = () => procs.others.filter((o) => !(o.id === 'codex' && codex.hasLive()) && !(o.id === 'openclaw' && openclaw.hasLive()));
+const gemini = new GeminiCollector({ running: runs('gemini') });
+const copilot = new CopilotCollector({ running: runs('copilot-cli') });
+const sources = new Sources([claude, codex, openclaw, gemini, copilot]);
+// A tool with its own collector is listed with the other AI tools only while none of its sessions
+// shows up as an agent (process id in processes.js -> collector).
+const COLLECTED = { codex, openclaw, gemini, 'copilot-cli': copilot };
+const localOthers = () => procs.others.filter((o) => !COLLECTED[o.id]?.hasLive());
 const catalog = new ProjectCatalog(claude);
 const history = new LocalHistory();
 // --data-dir keeps the hub's machines, sessions and history across restarts (a container volume).

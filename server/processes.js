@@ -8,7 +8,7 @@ import { redact } from './projects.js';
 const AGENTS = [
   { id: 'cursor', label: 'Cursor', match: (p) => p.name === 'cursor.exe' || p.name === 'cursor' },
   { id: 'windsurf', label: 'Windsurf', match: (p) => /^windsurf(\.exe)?$/.test(p.name) },
-  { id: 'copilot-cli', label: 'GitHub Copilot CLI', match: (p) => p.name === 'copilot.exe' || /@github[\\/]copilot[\\/]/i.test(p.cmd) },
+  { id: 'copilot-cli', label: 'GitHub Copilot CLI', match: (p) => p.name === 'copilot.exe' || p.name === 'copilot' || /@github[\\/]copilot[\\/]/i.test(p.cmd) },
   { id: 'codex', label: 'OpenAI Codex CLI', match: (p) => /^codex(\.exe)?$/.test(p.name) || /@openai[\\/]codex[\\/]/i.test(p.cmd) },
   { id: 'openclaw', label: 'OpenClaw', match: (p) => /^openclaw(-gateway)?(\.exe)?$/.test(p.name) || /openclaw[\\/](openclaw\.mjs|dist[\\/](entry|index)\.js)/i.test(p.cmd) },
   { id: 'gemini', label: 'Gemini CLI', match: (p) => /^gemini(\.exe)?$/.test(p.name) || /@google[\\/]gemini-cli[\\/]/i.test(p.cmd) },
