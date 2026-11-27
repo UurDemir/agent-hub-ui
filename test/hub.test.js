@@ -208,3 +208,34 @@ test('a lowered keys-file entry also lowers an offline machine and a restarted r
   assert.equal(hub2.archived('pc-1:s1').events['pc-1:s1'][0].detail, undefined);
   assert.equal(hub2.others()[0].cmd, undefined);
 });
+
+test('below full, names and summaries from a reporter older than 0.5.1 are treated as free text', () => {
+  const hub = new Hub();
+  const capped = { name: 'pc-1', share: 'activity' };
+  const old = (over) => report({ version: '0.4.1', ...over });
+  const a = agent({ name: 'fix the login bug', now: { verb: 'Calling', label: 'slack · post', summary: 'the launch slips', cat: 'mcp', since: 1 } });
+  hub.ingest(capped, old({ init: { agents: [a], others: [], events: { s1: [{ ...tool, summary: 'the launch slips' }] } } }));
+  const [x] = hub.snapshot();
+  assert.equal(x.name, 'app', 'the name is replaced by the project');
+  assert.equal(x.now.summary, undefined);
+  assert.equal(hub.allEvents(200)['pc-1:s1'][0].summary, undefined);
+  assert.equal(hub.list()[0].outdated, true);
+  // A current reporter's summaries written for a tool still come through at activity.
+  const hub2 = new Hub();
+  hub2.ingest(capped, report({ version: '0.5.1', init: { agents: [a], others: [], events: { s1: [tool] } } }));
+  assert.equal(hub2.allEvents(200)['pc-1:s1'][0].summary, 'ls');
+  assert.equal(hub2.snapshot()[0].name, 'fix the login bug');
+});
+
+test('a restarted hub applies the keys file before serving what it restored', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-data-'));
+  const a = new Hub({ dataDir: dir });
+  a.ingest(entry, report({ init }));
+  a.ingest(entry, report({ seq: 2, agents: [] }));
+  a.save();
+  const b = new Hub({ dataDir: dir, levelFor: () => 'metadata' });
+  b.load();
+  assert.equal(b.list()[0].share, 'metadata');
+  assert.equal(b.archived('pc-1:s1').events['pc-1:s1'][0].detail, undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

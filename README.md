@@ -184,7 +184,7 @@ Secrets aren't written into the service definition. Give the machine key with `-
 | Telegram | `telegram:<bot token>/<chat id>` |
 | Any webhook | `webhook:https://example/hook` (JSON `{ event, title, body, agent, t }`) |
 
-Targets carry tokens, so for a background service put them in a file, one per line: `--notify-file <file>` (`$AGENT_HUB_NOTIFY_FILE`). What a notification says follows its own sharing level, `--notify-share` (default `metadata`: an agent is named after its project folder and nothing it wrote is included; `activity` adds the tool it's running; `full` adds its last reply). `--notify-on` picks the events: `waiting`, `done` (the default is both) and `machine` (a reporting machine disconnects or comes back). `--notify-min-seconds` changes the 30 seconds. Notifications are rate limited per agent and overall.
+Targets carry tokens, so for a background service put them in a file, one per line: `--notify-file <file>` (`$AGENT_HUB_NOTIFY_FILE`). What a notification says follows its own sharing level, `--notify-share` (default `metadata`: an agent is named after its project folder and nothing it wrote is included; `activity` adds the tool it's running; `full` adds its last reply). `--notify-on` picks the events: `waiting`, `done` (the default is both) and `machine` (a reporting machine disconnects or comes back). `--notify-min-seconds` changes the 30 seconds. Notifications are rate limited per agent and overall. Plain `http://` targets are only accepted on this machine or the home network (private addresses, `.local`/`.lan` names) unless you pass `--allow-http`, and redirects are not followed.
 
 ## Metrics and health (optional)
 

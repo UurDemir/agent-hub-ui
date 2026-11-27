@@ -149,7 +149,7 @@ let notifier = null;
 if (notifyTargets.length) {
   try {
     notifier = new Notifier({
-      targets: notifyTargets, share: env.AGENT_HUB_NOTIFY_SHARE || 'metadata', host: os.hostname(),
+      targets: notifyTargets, share: env.AGENT_HUB_NOTIFY_SHARE || 'metadata', host: os.hostname(), allowHttp: env.AGENT_HUB_ALLOW_HTTP === '1',
       on: (env.AGENT_HUB_NOTIFY_ON || 'waiting,done').split(',').map((x) => x.trim()).filter(Boolean),
       minSeconds: env.AGENT_HUB_NOTIFY_MIN_SECONDS ? Number(env.AGENT_HUB_NOTIFY_MIN_SECONDS) : 30,
     });

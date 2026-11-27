@@ -34,7 +34,7 @@ const MAX_JSON = 8 * 1024 * 1024; // legacy whole-file sessions bigger than this
 const MAX_IDS = 3000;            // message / tool call ids remembered for deduping
 
 const SESSION_RE = /^session-.+\.jsonl?$/;
-const SAFE_ID = /^[A-Za-z0-9._-]{1,100}$/; // ids end up in keys: no '/', no ':'
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/; // ids end up in keys and paths: no '/', no ':', not '.' or '..'
 const TERMINAL = new Set(['success', 'error', 'cancelled']);
 const INTERRUPTED = '[The previous response was interrupted before it completed.]';
 

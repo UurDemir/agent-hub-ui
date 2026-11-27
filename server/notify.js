@@ -21,12 +21,20 @@ const TIMEOUT_MS = 10e3;
 const TOOL_NAMES = { codex: 'Codex', openclaw: 'OpenClaw', gemini: 'Gemini CLI', opencode: 'opencode', copilot: 'Copilot CLI' };
 
 // "<type>:<url>" -> { kind, url, headers, label } (label: what logs may show; never the secret part)
-export function parseTarget(spec) {
+// This machine or the home network (private IPv4, .local / .lan / .home.arpa names).
+export const isLocalHost = (h) => {
+  h = String(h).toLowerCase().replace(/^\[|\]$/g, '');
+  return h === 'localhost' || h === '::1' || /^127(\.\d{1,3}){3}$/.test(h) || /^10(\.\d{1,3}){3}$/.test(h)
+    || /^192\.168(\.\d{1,3}){2}$/.test(h) || /^172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}$/.test(h)
+    || /\.(local|lan|home\.arpa)$/.test(h);
+};
+
+export function parseTarget(spec, { allowHttp = false } = {}) {
   const s = String(spec || '').trim();
   const i = s.indexOf(':');
   const kind = s.slice(0, i).toLowerCase();
   const rest = s.slice(i + 1);
-  if (i < 0 || !KINDS.includes(kind)) throw new Error(`--notify: start the target with one of ${KINDS.map((k) => `${k}:`).join(', ')} (got "${s.slice(0, 20)}…")`);
+  if (i < 0 || !KINDS.includes(kind)) throw new Error(`--notify: start the target with one of ${KINDS.map((k) => `${k}:`).join(', ')} (this one has an unknown type; its value isn't shown because it may hold a token)`);
   if (kind === 'telegram') {
     const m = /^([0-9]+:[A-Za-z0-9_-]+)\/(-?[0-9]+|@[A-Za-z0-9_]+)$/.exec(rest);
     if (!m) throw new Error('--notify telegram: use telegram:<bot token>/<chat id>');
@@ -35,6 +43,10 @@ export function parseTarget(spec) {
   let url;
   try { url = new URL(rest); } catch { throw new Error(`--notify ${kind}: not a URL`); }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(`--notify ${kind}: the URL must be http(s)`);
+  // Like --report-to: no tokens or agent names in clear text off this machine unless asked for.
+  if (url.protocol === 'http:' && !isLocalHost(url.hostname) && !allowHttp) {
+    throw new Error(`--notify ${kind}: refusing plain http to ${url.host}. Use https://, or --allow-http if the network is already encrypted (VPN, Tailscale, WireGuard).`);
+  }
   const headers = {};
   if (url.username || url.password) { // fetch refuses credentials in a URL
     headers.Authorization = `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString('base64')}`;
@@ -55,7 +67,8 @@ export function request(target, n) {
       } };
     case 'gotify': return json({ title: n.title, message: n.body || n.title, priority: n.event === 'waiting' ? 7 : 4 });
     case 'discord': return json({ content: text.slice(0, 1900), allowed_mentions: { parse: [] } });
-    case 'slack': return json({ text: text.slice(0, 3000) });
+    // Slack reads <!channel>, <@user> and links from text: escape them so a name can't ping anyone.
+    case 'slack': return json({ text: text.slice(0, 3000).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') });
     case 'telegram': return json({ chat_id: target.chat, text: text.slice(0, 3500), disable_web_page_preview: true });
     default: return json({ event: n.event, title: n.title, body: n.body, agent: n.agent, t: n.t });
   }
@@ -63,16 +76,17 @@ export function request(target, n) {
 
 export class Notifier {
   // send(target, init): the HTTP call, replaceable in tests.
-  constructor({ targets, share = 'metadata', on = ['waiting', 'done'], minSeconds = 30, host = '', send } = {}) {
+  constructor({ targets, share = 'metadata', on = ['waiting', 'done'], minSeconds = 30, host = '', send, allowHttp = false } = {}) {
     if (!levelOf(share)) throw new Error(`--notify-share must be metadata, activity or full (got "${share}")`);
     const bad = on.filter((e) => !NOTIFY_EVENTS.includes(e));
     if (bad.length) throw new Error(`--notify-on: unknown event ${bad.join(', ')} (use ${NOTIFY_EVENTS.join(', ')})`);
-    this.targets = targets.map(parseTarget);
+    this.targets = targets.map((t) => parseTarget(t, { allowHttp }));
     this.share = share;
     this.on = new Set(on);
     this.minMs = Math.max(0, minSeconds) * 1000;
     this.host = host;
-    this.send = send || ((t, init) => fetch(t.url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }));
+    // No redirects: a redirect would carry the token (and the message) to wherever it points.
+    this.send = send || ((t, init) => fetch(t.url, { ...init, redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS) }));
     this.prev = null;       // key -> { status, workingSince }
     this.machines = null;   // machine id -> online
     this.lastByKey = new Map();

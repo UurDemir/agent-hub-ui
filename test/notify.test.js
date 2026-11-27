@@ -86,3 +86,28 @@ test('targets: each service gets its own request, and secrets stay out of the la
   assert.throws(() => parseTarget('https://ntfy.sh/x'), /start the target with one of/);
   assert.throws(() => parseTarget('ntfy:ftp://x/y'), /http\(s\)/);
 });
+
+test('plain http only to this machine or the home network, redirects refused, no secret in errors', async () => {
+  assert.throws(() => parseTarget('gotify:http://push.example.com/message?token=APP'), /refusing plain http/);
+  assert.equal(parseTarget('gotify:http://push.example.com/message?token=APP', { allowHttp: true }).kind, 'gotify');
+  for (const h of ['127.0.0.1', 'localhost', '192.168.1.20', '10.0.0.5', '172.20.1.1', 'ntfy.lan', 'nas.local']) {
+    assert.equal(parseTarget(`ntfy:http://${h}/agents`).kind, 'ntfy', h);
+  }
+  assert.throws(() => parseTarget('ntfy:http://172.32.0.1/x'), /refusing plain http/);
+  let msg = '';
+  try { parseTarget('123456789:AAHsecretBotToken/42'); } catch (e) { msg = e.message; }
+  assert.match(msg, /unknown type/);
+  assert.ok(!msg.includes('AAH') && !msg.includes('123456789'), 'the value is not echoed');
+  const slack = JSON.parse(request(parseTarget('slack:https://hooks.slack.com/x'), { event: 'done', title: '<!channel> finished', body: 'a & b' }).body);
+  assert.equal(slack.text, '&lt;!channel&gt; finished\na &amp; b');
+  const seen = [];
+  const n = new Notifier({ targets: ['webhook:https://hooks.example/x'], minSeconds: 0 });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { seen.push(init.redirect); return { ok: true }; };
+  try {
+    n.check([agent('working')], null, 0);
+    n.check([agent('idle')], null, 1000);
+    await new Promise((r) => setTimeout(r, 10));
+  } finally { globalThis.fetch = realFetch; }
+  assert.deepEqual(seen, ['error']);
+});

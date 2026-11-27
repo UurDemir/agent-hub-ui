@@ -90,6 +90,13 @@ export class Keyring {
 }
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+// Marks for share.js, for data from a reporter that doesn't set them itself.
+const distrustNow = (n) => (isObj(n) ? { ...n, freeText: true } : n);
+const distrustAgents = (list) => (Array.isArray(list) ? list.map((a) => (isObj(a) ? {
+  ...a, nameFromPrompt: true, now: distrustNow(a.now),
+  subagents: Array.isArray(a.subagents) ? a.subagents.map((s) => (isObj(s) ? { ...s, now: distrustNow(s.now) } : s)) : a.subagents,
+} : a)) : list);
+const distrustEvents = (evs) => (Array.isArray(evs) ? evs.map((e) => (isObj(e) && e.kind === 'tool' ? { ...e, freeText: true } : e)) : evs);
 // What History search looks at: only what this machine shared with the hub.
 const archiveText = (x) => [x.agent.name, x.agent.title, x.agent.project, x.agent.branch, x.agent.model,
   ...Object.values(x.events).flat().map((e) => `${e.text ?? ''} ${e.summary ?? ''} ${e.label ?? ''}`)].join('\n').toLowerCase();
@@ -155,20 +162,27 @@ export class Hub extends EventEmitter {
       version: typeof body.version === 'string' ? body.version.slice(0, 30) : '',
     });
 
+    // A reporter older than MIN_REPORTER doesn't mark prompt-made names and free-text summaries,
+    // so below full every name and summary from it is treated as one.
+    const legacy = level !== 'full' && versionBelow(m.version, MIN_REPORTER);
+    const agentsIn = (list) => (legacy ? distrustAgents(list) : list);
+    const eventsIn = (evs) => (legacy ? distrustEvents(evs) : evs);
+
     let agentsChanged = !wasOnline || fresh;
     if (isObj(body.init)) {
-      this.setAgents(m, body.init.agents, level, now); // archives what's gone, with its events
+      this.setAgents(m, agentsIn(body.init.agents), level, now); // archives what's gone, with its events
       m.events.clear();
       m.others = this.prefixOthers(m, body.init.others, level);
-      for (const [key, evs] of Object.entries(shareAllEvents(body.init.events, level))) this.addEvents(m, key, evs, false);
+      const initEvents = isObj(body.init.events) ? Object.fromEntries(Object.entries(body.init.events).map(([k, v]) => [k, eventsIn(v)])) : {};
+      for (const [key, evs] of Object.entries(shareAllEvents(initEvents, level))) this.addEvents(m, key, evs, false);
       agentsChanged = true;
       if (!wasOnline) console.log(`[hub] ${m.name} connected (${level})`);
       this.emit('others');
     } else {
-      if (Array.isArray(body.agents)) { this.setAgents(m, body.agents, level, now); agentsChanged = true; }
+      if (Array.isArray(body.agents)) { this.setAgents(m, agentsIn(body.agents), level, now); agentsChanged = true; }
       if (Array.isArray(body.others)) { m.others = this.prefixOthers(m, body.others, level); this.emit('others'); }
       for (const batch of Array.isArray(body.events) ? body.events.slice(0, 2000) : []) {
-        if (isObj(batch) && typeof batch.key === 'string') this.addEvents(m, batch.key, shareEvents(batch.events, level), true);
+        if (isObj(batch) && typeof batch.key === 'string') this.addEvents(m, batch.key, shareEvents(eventsIn(batch.events), level), true);
       }
     }
     if (agentsChanged) this.emit('agents');
@@ -250,7 +264,9 @@ export class Hub extends EventEmitter {
     };
     const file = path.join(this.dataDir, STATE_FILE);
     try {
-      fs.mkdirSync(this.dataDir, { recursive: true });
+      fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
+      // A leftover .tmp would keep its old mode: start a new file so 0600 applies.
+      fs.rmSync(`${file}.tmp`, { force: true });
       fs.writeFileSync(`${file}.tmp`, JSON.stringify(data), { mode: 0o600 });
       fs.renameSync(`${file}.tmp`, file);
       this.dirty = false;
@@ -270,7 +286,8 @@ export class Hub extends EventEmitter {
     const now = Date.now();
     for (const s of Array.isArray(data?.machines) ? data.machines : []) {
       if (!isObj(s) || !NAME_RE.test(String(s.name)) || !levelOf(s.share)) continue;
-      const level = s.share;
+      // The keys file may have lowered this machine while the hub was stopped.
+      const level = minLevel(s.share, levelOf(this.levelFor?.(s.name)) || s.share);
       const prefix = `${s.name}:`;
       const mine = (k) => typeof k === 'string' && k.startsWith(prefix);
       const restore = (list) => shareAgents(Array.isArray(list) ? list : [], level)
