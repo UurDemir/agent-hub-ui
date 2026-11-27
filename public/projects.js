@@ -404,6 +404,8 @@ function currentRoute() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (parts[0] === 'projects') return { view: 'projects', id: parts[1] || null, tab: parts[2] || 'overview' };
   if (parts[0] === 'canvas') return { view: 'canvas', project: parts[1] || null };
+  if (parts[0] === 'history') return { view: 'history', key: parts.slice(1).join('/') || null };
+  if (parts[0] === 'usage') return { view: 'usage' };
   return { view: 'live', key: parts[0] === 'live' ? parts.slice(1).join('/') : null };
 }
 
@@ -412,8 +414,15 @@ function route() {
   $('#view-live').hidden = r.view !== 'live';
   $('#view-projects').hidden = r.view !== 'projects';
   $('#view-canvas').hidden = r.view !== 'canvas';
+  $('#view-history').hidden = r.view !== 'history';
+  $('#view-usage').hidden = r.view !== 'usage';
   for (const a of document.querySelectorAll('#tabs a')) a.classList.toggle('on', a.dataset.view === r.view);
-  if (r.view === 'projects') {
+  if (r.view === 'history') {
+    showHistory(r.key);
+  } else if (r.view === 'usage') {
+    window.scrollTo(0, 0);
+    showUsage();
+  } else if (r.view === 'projects') {
     window.scrollTo(0, 0);
     if (r.id) showProject(r.id, r.tab); else showProjectList();
   } else if (r.view === 'canvas') {

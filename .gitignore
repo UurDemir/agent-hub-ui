@@ -2,3 +2,6 @@
 .playwright-mcp/
 .claude/settings.local.json
 .claude/*.local.md
+
+# Worktrees Claude Code creates for parallel agents
+.claude/worktrees/

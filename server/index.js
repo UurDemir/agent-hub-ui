@@ -11,7 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { ClaudeCollector, DIR } from './claude.js';
 import { CodexCollector } from './codex.js';
 import { OpenClawCollector } from './openclaw.js';
+import { GeminiCollector } from './gemini.js';
+import { CopilotCollector } from './copilot.js';
+import { OpenCodeCollector } from './opencode.js';
 import { Sources } from './sources.js';
+import { metrics } from './metrics.js';
+import { Notifier } from './notify.js';
+import { LocalHistory } from './history.js';
 import { MAX_MESSAGE, sendToSession } from './messaging.js';
 import { ProcessScanner } from './processes.js';
 import { ProjectCatalog } from './projects.js';
@@ -64,8 +70,12 @@ const readSecret = (file) => { try { return fs.readFileSync(file, 'utf8').trim()
 /* ---------- configuration ---------- */
 
 const HEADLESS = env.AGENT_HUB_HEADLESS === '1';
+// --metrics: Prometheus counts at /metrics, behind the same Host check and viewer password.
+const METRICS = env.AGENT_HUB_METRICS === '1';
 const HUB = env.AGENT_HUB_HUB === '1';
-const VIEWER_PASSWORD = env.AGENT_HUB_VIEWER_PASSWORD || '';
+const VIEWER_PASSWORD = env.AGENT_HUB_VIEWER_PASSWORD
+  || (env.AGENT_HUB_VIEWER_PASSWORD_FILE ? readSecret(env.AGENT_HUB_VIEWER_PASSWORD_FILE) : '');
+if (env.AGENT_HUB_VIEWER_PASSWORD_FILE && !VIEWER_PASSWORD) die(`${env.AGENT_HUB_VIEWER_PASSWORD_FILE} is empty; put the viewer password in it.`);
 const viewerHash = VIEWER_PASSWORD && digest(VIEWER_PASSWORD);
 
 if (HUB && !env.AGENT_HUB_KEYS && !env.AGENT_HUB_MACHINES) die('--hub needs --hub-keys <file>: the machines allowed to report. Create entries with --new-key <name>.');
@@ -97,11 +107,26 @@ const procs = new ProcessScanner();
 const runs = (id) => () => procs.others.some((o) => o.id === id);
 const codex = new CodexCollector({ running: runs('codex') });
 const openclaw = new OpenClawCollector({ running: runs('openclaw') });
-const sources = new Sources([claude, codex, openclaw]);
-// Codex and OpenClaw are listed with the other AI tools only while none of their sessions shows up as an agent.
-const localOthers = () => procs.others.filter((o) => !(o.id === 'codex' && codex.hasLive()) && !(o.id === 'openclaw' && openclaw.hasLive()));
+const gemini = new GeminiCollector({ running: runs('gemini') });
+const copilot = new CopilotCollector({ running: runs('copilot-cli') });
+const opencode = new OpenCodeCollector({ running: runs('opencode') });
+const sources = new Sources([claude, codex, openclaw, gemini, copilot, opencode]);
+// A tool with its own collector is listed with the other AI tools only while none of its sessions
+// shows up as an agent (process id in processes.js -> collector).
+const COLLECTED = { codex, openclaw, gemini, 'copilot-cli': copilot, opencode };
+const localOthers = () => procs.others.filter((o) => !COLLECTED[o.id]?.hasLive());
 const catalog = new ProjectCatalog(claude);
-const hub = HUB ? new Hub() : null;
+const history = new LocalHistory();
+// --data-dir keeps the hub's machines, sessions and history across restarts (a container volume).
+const hub = HUB ? new Hub({
+  dataDir: env.AGENT_HUB_DATA_DIR || null, retainDays: Number(env.AGENT_HUB_RETAIN_DAYS) || 7,
+  levelFor: (name) => { keyring.refresh(); return keyring.entries.find((e) => e.name === name)?.share || null; },
+}) : null;
+if (hub?.dataDir) {
+  const stop = () => { hub.save(); process.exit(0); };
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
+}
 const clients = new Set();
 let reporter = null;
 if (reportUrl) {
@@ -112,6 +137,23 @@ if (reportUrl) {
       share: env.AGENT_HUB_SHARE || 'metadata',
       collector: sources, procs: { get others() { return localOthers(); } }, version: VERSION,
     });
+  } catch (e) { die(e.message); }
+}
+
+// --notify: push notifications when an agent needs you or finishes (see notify.js).
+const notifyTargets = [
+  ...(env.AGENT_HUB_NOTIFY || '').split(/[\s,]+/),
+  ...(env.AGENT_HUB_NOTIFY_FILE ? readSecret(env.AGENT_HUB_NOTIFY_FILE).split(/\r?\n/) : []),
+].map((t) => t.trim()).filter((t) => t && !t.startsWith('#'));
+let notifier = null;
+if (notifyTargets.length) {
+  try {
+    notifier = new Notifier({
+      targets: notifyTargets, share: env.AGENT_HUB_NOTIFY_SHARE || 'metadata', host: os.hostname(), allowHttp: env.AGENT_HUB_ALLOW_HTTP === '1',
+      on: (env.AGENT_HUB_NOTIFY_ON || 'waiting,done').split(',').map((x) => x.trim()).filter(Boolean),
+      minSeconds: env.AGENT_HUB_NOTIFY_MIN_SECONDS ? Number(env.AGENT_HUB_NOTIFY_MIN_SECONDS) : 30,
+    });
+    console.log(`Notifications on: ${notifier.targets.map((t) => t.label).join(', ')} (sharing: ${notifier.share})`);
   } catch (e) { die(e.message); }
 }
 
@@ -129,8 +171,10 @@ let lastMachines = '';
 let agentsTimer = null;
 function pushAgents() {
   agentsTimer = null;
-  const json = JSON.stringify(agents());
+  const list = agents();
+  const json = JSON.stringify(list);
   if (json !== lastAgents) { lastAgents = json; broadcast('agents', json); }
+  notifier?.check(list, machines());
   if (hub) {
     const m = JSON.stringify(machines());
     if (m !== lastMachines) { lastMachines = m; broadcast('machines', m); }
@@ -202,6 +246,52 @@ async function projects(req, res) {
   }
 }
 
+// History and Usage. This PC's own transcripts only for someone on this PC (like the Projects
+// page); the hub's archive holds only what each machine shared, so every viewer gets that part.
+async function historyApi(req, res) {
+  const u = new URL(req.url, 'http://x');
+  const mine = !remoteViewer(req);
+  if (u.pathname === '/api/usage') {
+    const days = Math.min(120, Math.max(1, Number(u.searchParams.get('days')) || 30));
+    const since = Date.now() - days * 86400e3;
+    let machinesUsage = null;
+    if (hub) {
+      const rows = new Map();
+      const add = (machine, a, t) => {
+        if (!(t >= since)) return;
+        const r = rows.get(machine) || { machine, sessions: 0, out: 0, cost: 0, priced: false };
+        r.sessions++;
+        r.out += (Number(a.outTokens) || 0) + (a.subagents || []).reduce((n, s) => n + (Number(s.outTokens) || 0), 0);
+        const c = (typeof a.cost === 'number' ? a.cost : 0) + (a.subagents || []).reduce((n, s) => n + (typeof s.cost === 'number' ? s.cost : 0), 0);
+        if (typeof a.cost === 'number') r.priced = true;
+        r.cost += c;
+        rows.set(machine, r);
+      };
+      for (const a of hub.snapshot()) add(a.machine, a, a.lastAt);
+      for (const h of hub.history({ limit: 100000 })) add(h.machine, h.agent, h.endedAt);
+      machinesUsage = [...rows.values()].sort((a, b) => b.out - a.out);
+    }
+    return json(res, 200, { local: mine ? await history.usageReport(days) : null, machines: machinesUsage });
+  }
+  const rest = decode(u.pathname.slice('/api/history'.length).replace(/^\/+/, ''));
+  if (rest == null) return json(res, 400, { error: 'Bad request' });
+  if (!rest) {
+    const q = String(u.searchParams.get('q') || '').slice(0, 200);
+    const before = Number(u.searchParams.get('before')) || Infinity;
+    return json(res, 200, {
+      local: mine ? await history.list({ q, before, limit: 50 }) : null,
+      remote: hub ? hub.history({ q, limit: 200 }) : null,
+    });
+  }
+  if (rest.includes(':')) { // a hub archive key: <machine>:<session key>
+    const x = hub?.archived(rest);
+    return x ? json(res, 200, { agent: x.agent, events: x.events }) : json(res, 404, { error: 'Not in the history' });
+  }
+  if (!mine) return json(res, 404, { error: "This PC's own history is only available on this PC itself." });
+  const s = history.session(rest);
+  return s ? json(res, 200, { agent: s.agent, events: { [s.agent.key]: s.events } }) : json(res, 404, { error: 'No such session' });
+}
+
 // Checks shared by the messaging endpoints; returns true if it already answered.
 function refuseSend(req, res) {
   let why;
@@ -256,6 +346,8 @@ function viewerAllowed(req) {
 
 function handle(req, res) {
   if (!hostAllowed(req)) { res.writeHead(403).end('Forbidden host'); return; }
+  // For container health checks: answers before the login and says nothing about any session.
+  if (req.url === '/healthz') return json(res, 200, { ok: true });
   // No framing by other sites (clickjacking the message box).
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
@@ -271,6 +363,14 @@ function handle(req, res) {
   if (req.url.startsWith('/api/projects')) {
     if (remoteViewer(req)) return json(res, 404, { error: 'The Projects page is only available on this PC itself.' });
     return projects(req, res);
+  }
+  if (req.url === '/api/history' || req.url.startsWith('/api/history?') || req.url.startsWith('/api/history/') || req.url.startsWith('/api/usage')) {
+    return historyApi(req, res).catch((e) => { console.error('[history]', e); if (!res.headersSent) json(res, 500, { error: e.message }); });
+  }
+  if (req.url === '/metrics') {
+    if (!METRICS) return json(res, 404, { error: 'Metrics are off. Start Agent Hub with --metrics.' });
+    res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-cache' });
+    return res.end(metrics({ agents: agents(), machines: machines(), others: others(), host: os.hostname() }));
   }
   if (req.url === '/api/agents') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
