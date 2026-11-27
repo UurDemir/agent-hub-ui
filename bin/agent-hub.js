@@ -55,6 +55,20 @@ Run a hub that shows agents from many machines:
                              (or set $AGENT_HUB_VIEWER_PASSWORD)
       --viewer-password-file <f>
                              The same, read from a file ($AGENT_HUB_VIEWER_PASSWORD_FILE)
+      --data-dir <dir>       Keep the hub's machines, sessions and History here across
+                             restarts ($AGENT_HUB_DATA_DIR; the container uses /data)
+      --retain-days <n>      Keep ended sessions and silent machines this long (default 7)
+
+Push notifications (when an agent needs you or finishes; also without a hub):
+      --notify <target>      ntfy:https://ntfy.sh/<topic>, gotify:<url>?token=…, discord:<webhook>,
+                             slack:<webhook>, telegram:<bot token>/<chat id> or webhook:<url>
+                             (repeatable, or $AGENT_HUB_NOTIFY)
+      --notify-file <file>   Targets from a file, one per line (keeps tokens out of a service)
+      --notify-share <level> What a notification says: metadata (default), activity or full
+      --notify-on <events>   waiting,done (default); add machine for hub disconnects
+      --notify-min-seconds <n>  Only say "finished" after a turn this long (default 30)
+
+      --metrics              Serve Prometheus metrics (counts only) at /metrics
 
 Run it in the background (per user; starts at login, restarts after a failure):
       --install-service      Install and start a service that runs agent-hub with the other
@@ -70,6 +84,7 @@ Reads Claude Code's state from ~/.claude (or $CLAUDE_CONFIG_DIR). Never writes t
 
 const args = process.argv.slice(2);
 const allowed = [];
+const notify = [];
 let open = true;
 const SERVICE_ACTIONS = ['--install-service', '--uninstall-service', '--service-status', '--print-service'];
 const service = [...new Set(args.filter((a) => SERVICE_ACTIONS.includes(a)))];
@@ -109,6 +124,14 @@ for (let i = 0; i < args.length; i++) {
     case '--allowed-host': allowed.push(value()); break;
     case '--install-service': case '--uninstall-service': case '--service-status': case '--print-service': break;
     case '--viewer-password-file': process.env.AGENT_HUB_VIEWER_PASSWORD_FILE = value(); break;
+    case '--data-dir': process.env.AGENT_HUB_DATA_DIR = value(); break;
+    case '--retain-days': process.env.AGENT_HUB_RETAIN_DAYS = value(); break;
+    case '--notify': notify.push(value()); break;
+    case '--notify-file': process.env.AGENT_HUB_NOTIFY_FILE = value(); break;
+    case '--notify-share': process.env.AGENT_HUB_NOTIFY_SHARE = value(); break;
+    case '--notify-on': process.env.AGENT_HUB_NOTIFY_ON = value(); break;
+    case '--notify-min-seconds': process.env.AGENT_HUB_NOTIFY_MIN_SECONDS = value(); break;
+    case '--metrics': process.env.AGENT_HUB_METRICS = '1'; break;
     case '--viewer-password':
       process.env.AGENT_HUB_VIEWER_PASSWORD = value();
       if (!service.length) console.warn('Note: other users of this machine can see --viewer-password in the process list. $AGENT_HUB_VIEWER_PASSWORD keeps it out.');
@@ -138,6 +161,7 @@ if (service.length) {
   process.exitCode = runService(service[0], { args, env: startEnv });
 } else {
   if (allowed.length) process.env.AGENT_HUB_ALLOWED_HOSTS = [process.env.AGENT_HUB_ALLOWED_HOSTS, ...allowed].filter(Boolean).join(',');
+  if (notify.length) process.env.AGENT_HUB_NOTIFY = [process.env.AGENT_HUB_NOTIFY, ...notify].filter(Boolean).join(' ');
   if (open && process.env.AGENT_HUB_HEADLESS !== '1') process.env.AGENT_HUB_OPEN = '1';
   await import('../server/index.js');
 }

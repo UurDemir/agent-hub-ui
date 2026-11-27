@@ -102,8 +102,11 @@ export class Hub extends EventEmitter {
 
   // dataDir: where the hub keeps its state across restarts (--data-dir), or null to keep it in
   // memory only. retainDays: how long ended sessions and silent machines are kept.
-  constructor({ dataDir = null, retainDays = 7 } = {}) {
+  // levelFor(name): the keys file's current cap for a machine (null if it has no entry), so a
+  // lowered entry also lowers what's kept from a machine that isn't reporting right now.
+  constructor({ dataDir = null, retainDays = 7, levelFor = null } = {}) {
     super();
+    this.levelFor = levelFor;
     this.dataDir = dataDir;
     this.retainMs = Math.max(1, retainDays) * 86400e3;
     this.dirty = false;
@@ -136,7 +139,7 @@ export class Hub extends EventEmitter {
       // the new snapshot no longer lists move to the archive in setAgents().
       const prev = m;
       m = {
-        name: entry.name, instance, connectedAt: now, others: [],
+        name: entry.name, instance, connectedAt: now, others: [], share: prev?.share,
         agents: prev?.agents || [], events: prev?.events || new Map(), keys: prev?.keys || new Set(), archive: prev?.archive || new Map(),
       };
       this.machines.set(entry.name, m);
@@ -192,6 +195,7 @@ export class Hub extends EventEmitter {
     };
     m.agents = m.agents.map(again).filter(Boolean);
     for (const [k, evs] of m.events) m.events.set(k, shareEvents(evs, level));
+    m.others = shareOthers(m.others, level).map((o) => ({ ...o, machine: m.name }));
     for (const [k, x] of m.archive) {
       const agent = again(x.agent);
       if (!agent) { m.archive.delete(k); continue; }
@@ -310,6 +314,8 @@ export class Hub extends EventEmitter {
   sweep(now = Date.now()) {
     let changed = false;
     for (const [name, m] of this.machines) {
+      const cap = this.levelFor?.(name);
+      if (cap && m.share && minLevel(m.share, cap) !== m.share) { this.lowerLevel(m, cap); changed = true; }
       for (const [k, x] of m.archive) if (now - x.endedAt > this.retainMs) { m.archive.delete(k); this.dirty = true; }
       if (now - m.lastSeen > this.retainMs) { this.machines.delete(name); changed = true; }
       else if (m.agents.length && now - m.lastSeen > FORGET_MS) {

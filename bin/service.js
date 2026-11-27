@@ -16,18 +16,22 @@ export const ACTIONS = ['--install-service', '--uninstall-service', '--service-s
 
 const VALUE_FLAGS = new Set(['-p', '--port', '--host', '--report-to', '--report-key-file', '--share', '--hub-keys',
   '--ingest-port', '--ingest-host', '--tls-cert', '--tls-key', '--allowed-host', '--viewer-password',
-  '--viewer-password-file', '--new-key']);
+  '--viewer-password-file', '--new-key', '--notify', '--notify-file', '--notify-share', '--notify-on',
+  '--notify-min-seconds', '--data-dir', '--retain-days']);
 // Relative paths are resolved now: the service doesn't start in the folder you installed it from.
-const FILE_FLAGS = new Set(['--report-key-file', '--viewer-password-file', '--hub-keys', '--tls-cert', '--tls-key']);
+const FILE_FLAGS = new Set(['--report-key-file', '--viewer-password-file', '--hub-keys', '--tls-cert', '--tls-key', '--notify-file', '--data-dir']);
 const DROP = new Set([...ACTIONS, '--open', '--no-open']);
 // Environment the service keeps from the shell that installs it: where the agents keep their state,
 // a CA for a self-signed hub, and Agent Hub settings given as env vars instead of flags. Nothing secret:
 // the key and password variables are refused below.
-const PATH_ENV = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_HOME', 'NODE_EXTRA_CA_CERTS',
-  'AGENT_HUB_REPORT_KEY_FILE', 'AGENT_HUB_VIEWER_PASSWORD_FILE', 'AGENT_HUB_KEYS', 'AGENT_HUB_TLS_CERT', 'AGENT_HUB_TLS_KEY'];
+const PATH_ENV = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_HOME', 'GEMINI_CLI_HOME', 'COPILOT_HOME',
+  'XDG_DATA_HOME', 'OPENCODE_DB', 'NODE_EXTRA_CA_CERTS',
+  'AGENT_HUB_REPORT_KEY_FILE', 'AGENT_HUB_VIEWER_PASSWORD_FILE', 'AGENT_HUB_KEYS', 'AGENT_HUB_TLS_CERT', 'AGENT_HUB_TLS_KEY',
+  'AGENT_HUB_NOTIFY_FILE', 'AGENT_HUB_DATA_DIR'];
 const PLAIN_ENV = ['PORT', 'HOST', 'OPENCLAW_PROFILE', 'AGENT_HUB_REPORT_TO', 'AGENT_HUB_SHARE', 'AGENT_HUB_ALLOW_HTTP',
   'AGENT_HUB_HEADLESS', 'AGENT_HUB_HUB', 'AGENT_HUB_INGEST_PORT', 'AGENT_HUB_INGEST_HOST', 'AGENT_HUB_ALLOWED_HOSTS',
-  'AGENT_HUB_ALLOW_SEND'];
+  'AGENT_HUB_ALLOW_SEND', 'AGENT_HUB_NOTIFY_SHARE', 'AGENT_HUB_NOTIFY_ON', 'AGENT_HUB_NOTIFY_MIN_SECONDS',
+  'AGENT_HUB_METRICS', 'AGENT_HUB_RETAIN_DAYS'];
 
 export class ServiceError extends Error {}
 const fail = (msg) => { throw new ServiceError(msg); };
@@ -71,6 +75,13 @@ function check(args, env) {
     fail(env.AGENT_HUB_REPORT_KEY
       ? '$AGENT_HUB_REPORT_KEY is set, but the service would have to store it in plain text. Save the key to a file only you can read and pass --report-key-file <file> instead.'
       : 'A reporting service needs the machine key in a file: pass --report-key-file <file>.');
+  }
+  // Notification targets carry tokens (webhook URLs, bot tokens, ntfy credentials).
+  if (args.includes('--notify') || args.some((a) => a.startsWith('--notify='))) {
+    fail('--notify targets usually contain a token, which would be saved in plain text in the service definition. Put them in a file only you can read, one per line, and pass --notify-file <file> instead.');
+  }
+  if (env.AGENT_HUB_NOTIFY) {
+    fail('$AGENT_HUB_NOTIFY isn\'t copied into the service, since its targets usually contain a token. Put them in a file, one per line, and pass --notify-file <file>.');
   }
   if (env.AGENT_HUB_MACHINES && !has('--hub-keys', 'AGENT_HUB_KEYS')) {
     fail('$AGENT_HUB_MACHINES isn\'t copied into the service. Save its JSON to a file and pass --hub-keys <file> (the hub re-reads it when it changes).');

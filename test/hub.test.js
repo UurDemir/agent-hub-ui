@@ -187,3 +187,24 @@ test('lowering a machine in the keys file lowers what the hub already kept from 
   assert.equal(hub.snapshot()[0].cwd, undefined);
   assert.equal(hub.list()[0].share, 'metadata');
 });
+
+test('a lowered keys-file entry also lowers an offline machine and a restarted reporter', () => {
+  let cap = 'full';
+  const hub = new Hub({ levelFor: () => cap });
+  const full = { name: 'pc-1', share: 'full' };
+  hub.ingest(full, report({ init }), 0);
+  hub.ingest(full, report({ seq: 2, agents: [] }), 1000);
+  cap = 'metadata';
+  hub.sweep(60e3); // no report from it since
+  assert.equal(hub.archived('pc-1:s1').events['pc-1:s1'][0].detail, undefined);
+  assert.equal(hub.others()[0], undefined, 'offline machines list no tools');
+  assert.equal(hub.list()[0].share, 'metadata');
+
+  const hub2 = new Hub();
+  hub2.ingest(full, report({ init }), 0);
+  hub2.ingest(full, report({ seq: 2, agents: [] }), 1000);
+  // The reporter restarts (new instance) after the entry was lowered.
+  hub2.ingest({ name: 'pc-1', share: 'activity' }, report({ instance: 'i2', seq: 1, init: { agents: [], others: [{ id: 'cursor', label: 'Cursor', pids: [1], cmd: '/opt/cursor --secret' }], events: {} } }), 60e3);
+  assert.equal(hub2.archived('pc-1:s1').events['pc-1:s1'][0].detail, undefined);
+  assert.equal(hub2.others()[0].cmd, undefined);
+});

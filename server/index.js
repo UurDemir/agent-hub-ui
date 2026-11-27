@@ -118,7 +118,10 @@ const localOthers = () => procs.others.filter((o) => !COLLECTED[o.id]?.hasLive()
 const catalog = new ProjectCatalog(claude);
 const history = new LocalHistory();
 // --data-dir keeps the hub's machines, sessions and history across restarts (a container volume).
-const hub = HUB ? new Hub({ dataDir: env.AGENT_HUB_DATA_DIR || null, retainDays: Number(env.AGENT_HUB_RETAIN_DAYS) || 7 }) : null;
+const hub = HUB ? new Hub({
+  dataDir: env.AGENT_HUB_DATA_DIR || null, retainDays: Number(env.AGENT_HUB_RETAIN_DAYS) || 7,
+  levelFor: (name) => { keyring.refresh(); return keyring.entries.find((e) => e.name === name)?.share || null; },
+}) : null;
 if (hub?.dataDir) {
   const stop = () => { hub.save(); process.exit(0); };
   process.once('SIGTERM', stop);
