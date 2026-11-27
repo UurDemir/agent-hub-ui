@@ -9,6 +9,9 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ClaudeCollector, DIR } from './claude.js';
+import { CodexCollector } from './codex.js';
+import { OpenClawCollector } from './openclaw.js';
+import { Sources } from './sources.js';
 import { MAX_MESSAGE, sendToSession } from './messaging.js';
 import { ProcessScanner } from './processes.js';
 import { ProjectCatalog } from './projects.js';
@@ -91,6 +94,12 @@ if (env.AGENT_HUB_REPORT_TO) {
 
 const claude = new ClaudeCollector();
 const procs = new ProcessScanner();
+const runs = (id) => () => procs.others.some((o) => o.id === id);
+const codex = new CodexCollector({ running: runs('codex') });
+const openclaw = new OpenClawCollector({ running: runs('openclaw') });
+const sources = new Sources([claude, codex, openclaw]);
+// Codex and OpenClaw are listed with the other AI tools only while none of their sessions shows up as an agent.
+const localOthers = () => procs.others.filter((o) => !(o.id === 'codex' && codex.hasLive()) && !(o.id === 'openclaw' && openclaw.hasLive()));
 const catalog = new ProjectCatalog(claude);
 const hub = HUB ? new Hub() : null;
 const clients = new Set();
@@ -101,14 +110,14 @@ if (reportUrl) {
       url: reportUrl,
       key: env.AGENT_HUB_REPORT_KEY || (env.AGENT_HUB_REPORT_KEY_FILE ? readSecret(env.AGENT_HUB_REPORT_KEY_FILE) : ''),
       share: env.AGENT_HUB_SHARE || 'metadata',
-      collector: claude, procs, version: VERSION,
+      collector: sources, procs: { get others() { return localOthers(); } }, version: VERSION,
     });
   } catch (e) { die(e.message); }
 }
 
-const agents = () => (hub ? [...claude.snapshot(), ...hub.snapshot()] : claude.snapshot());
-const others = () => (hub ? [...procs.others, ...hub.others()] : procs.others);
-const allEvents = (n) => (hub ? { ...claude.allEvents(n), ...hub.allEvents(n) } : claude.allEvents(n));
+const agents = () => (hub ? [...sources.snapshot(), ...hub.snapshot()] : sources.snapshot());
+const others = () => (hub ? [...localOthers(), ...hub.others()] : localOthers());
+const allEvents = (n) => (hub ? { ...sources.allEvents(n), ...hub.allEvents(n) } : sources.allEvents(n));
 // In hub mode: this PC first (its agents keep their plain keys), then the reporting machines.
 const machines = () => (hub ? [{ id: '@local', name: os.hostname(), local: true, online: true }, ...hub.list()] : null);
 
@@ -130,8 +139,8 @@ function pushAgents() {
 // Reports from many machines arrive all the time; send at most a few snapshots a second.
 const schedulePush = () => { agentsTimer ??= setTimeout(pushAgents, 250); };
 
-claude.on('tick', pushAgents);
-claude.on('events', (key, events) => broadcast('events', JSON.stringify({ key, events })));
+sources.on('tick', pushAgents);
+sources.on('events', (key, events) => broadcast('events', JSON.stringify({ key, events })));
 procs.on('update', () => broadcast('others', JSON.stringify(others())));
 hub?.on('agents', schedulePush);
 hub?.on('events', (key, events) => broadcast('events', JSON.stringify({ key, events })));
@@ -325,7 +334,7 @@ function onListenError(what, port) {
   };
 }
 
-claude.start();
+sources.start();
 procs.start();
 reporter?.start();
 hub?.start();

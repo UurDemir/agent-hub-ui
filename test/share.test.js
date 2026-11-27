@@ -96,3 +96,11 @@ test('minLevel picks the more private level', () => {
   assert.equal(minLevel('full', 'metadata'), 'metadata');
   assert.equal(minLevel('activity', 'full'), 'activity');
 });
+
+test('a name made from a prompt stays on this machine below full', () => {
+  const a = { key: 'k', sessionId: 'abcdef123456', project: 'demo', name: 'fix the login bug', nameFromPrompt: true, status: 'idle', subagents: [] };
+  assert.equal(shareAgents([a], 'activity')[0].name, 'demo');
+  assert.equal(shareAgents([a], 'full')[0].name, 'fix the login bug');
+  assert.equal(shareAgents([{ ...a, nameFromPrompt: false }], 'activity')[0].name, 'fix the login bug');
+  assert.equal('nameFromPrompt' in shareAgents([a], 'full')[0], false, 'the flag itself is not sent');
+});

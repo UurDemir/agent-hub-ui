@@ -84,6 +84,12 @@ async function unlockSending() {
 const $ = (s) => document.querySelector(s);
 // Who wrote a prompt: you, you through Agent Hub's message box, another session, or a subagent's task.
 // `a` is the agent or subagent; on a hub, prompts typed on another machine are a USER's.
+// Which tool runs an agent: Claude Code sessions have no kind or a Claude Code one (bg, interactive…).
+const TOOL_KINDS = { codex: 'CODEX', openclaw: 'OPENCLAW' };
+const toolKind = (a) => (Object.hasOwn(TOOL_KINDS, (a.parent || a).kind) ? (a.parent || a).kind : null);
+const isOtherTool = (a) => !!toolKind(a); // not Claude Code: no Projects page for its folder
+const agentWho = (a) => TOOL_KINDS[toolKind(a)] || 'CLAUDE';
+const kindTag = (a) => (toolKind(a) ? `<span class="tag">${toolKind(a)}</span>` : a.kind === 'bg' ? '<span class="tag">background</span>' : '');
 const promptWho = (e, a) => (a.parent ? 'TASK' : e.from === 'agent-hub' ? 'YOU · HUB' : e.from ? 'SESSION' : a.remote ? 'USER' : 'YOU');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -264,7 +270,7 @@ function cardHTML(a) {
   <article class="card s-${a.status} ${a.key === state.selected ? 'sel' : ''}" data-key="${esc(a.key)}">
     <div class="card-top">
       <span class="dot"></span><span class="status">${STATUS_LABEL[a.status] || a.status}</span>
-      ${a.kind === 'bg' ? '<span class="tag">background</span>' : ''}
+      ${kindTag(a)}
       <span class="spacer"></span>
       <span title="Last activity">${a.lastAt ? `<span data-since="${a.lastAt}"></span> ago` : ''}</span>
     </div>
@@ -290,7 +296,7 @@ function cardHTML(a) {
 function renderCards() {
   const live = state.agents.filter((a) => a.live);
   const ended = state.agents.filter((a) => !a.live);
-  $('#cards').innerHTML = live.length ? live.map(cardHTML).join('') : '<div class="others"><span class="none">No Claude Code sessions are running right now.</span></div>';
+  $('#cards').innerHTML = live.length ? live.map(cardHTML).join('') : '<div class="others"><span class="none">No Claude Code, Codex or OpenClaw sessions are running right now.</span></div>';
   $('#recent').innerHTML = ended.map(cardHTML).join('');
   $('#recent-h').hidden = !ended.length;
   $('#floor-count').textContent = `${live.length} running`;
@@ -314,7 +320,7 @@ function renderOthers() {
         <div><div class="nm">${esc(o.label)}${state.machines ? ` <span class="tag">${esc(o.machine || state.host)}</span>` : ''}</div>
         <div class="m">${o.pids.length} process${o.pids.length > 1 ? 'es' : ''} · ${fmtBytes(o.memory)}${o.startedAt ? ` · up <span data-since="${o.startedAt}"></span>` : ''}</div></div>
       </div>`).join('')
-    : '<span class="none">None running. Watching for Cursor, Windsurf, Copilot CLI, Codex CLI, Gemini CLI, Aider, opencode, Goose, Claude Desktop, Ollama and LM Studio.</span>';
+    : '<span class="none">None running. Watching for Cursor, Windsurf, Copilot CLI, Codex CLI, OpenClaw, Gemini CLI, Aider, opencode, Goose, Claude Desktop, Ollama and LM Studio.</span>';
 }
 
 /* ---------------- swimlanes ---------------- */
@@ -468,7 +474,7 @@ function detailHeadHTML(a) {
   html += `
     <div class="card-top">
       <span class="dot"></span><span class="status">${STATUS_LABEL[a.status] || a.status}</span>
-      ${isSub ? '<span class="tag">subagent</span>' : a.kind === 'bg' ? '<span class="tag">background</span>' : ''}
+      ${isSub ? '<span class="tag">subagent</span>' : kindTag(a)}
     </div>
     <h3>${esc(isSub ? a.type : a.name)}</h3>
     ${isSub && a.description ? `<div class="d-title">${esc(a.description)}</div>` : ''}
@@ -480,8 +486,8 @@ function detailHeadHTML(a) {
     </div>
     <dl class="kv">
       ${!isSub && state.machines ? kv('Machine', machineName(a)) : ''}
-      ${isSub || !a.cwd || a.remote || !state.projectsOn ? '' : `<dt>Folder</dt><dd title="${esc(a.cwd)}"><a href="#/projects/${encodeURIComponent(a.cwd.replace(/[^a-zA-Z0-9]/g, '-'))}">${esc(a.cwd)}</a></dd>`}
-      ${!isSub && (a.remote || !state.projectsOn) ? kv('Folder', a.cwd || a.project) : ''}
+      ${isSub || !a.cwd || a.remote || isOtherTool(a) || !state.projectsOn ? '' : `<dt>Folder</dt><dd title="${esc(a.cwd)}"><a href="#/projects/${encodeURIComponent(a.cwd.replace(/[^a-zA-Z0-9]/g, '-'))}">${esc(a.cwd)}</a></dd>`}
+      ${!isSub && (a.remote || isOtherTool(a) || !state.projectsOn) ? kv('Folder', a.cwd || a.project) : ''}
       ${isSub ? '' : kv('Branch', a.branch)}
       ${kv('Model', a.model)}
       <dt>Context</dt><dd>${fmtK(a.context)} tokens</dd>

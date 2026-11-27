@@ -19,7 +19,7 @@ after(() => {
 });
 
 function start(env) {
-  const child = spawn(process.execPath, [SERVER], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [SERVER], { env: { ...process.env, CODEX_HOME: path.join(tmp, 'no-codex'), OPENCLAW_STATE_DIR: path.join(tmp, 'no-openclaw'), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   children.push(child);
   child.log = '';
   child.stdout.on('data', (d) => { child.log += d; });
@@ -62,6 +62,22 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
   ];
   fs.writeFileSync(path.join(project, '11111111-2222-3333-4444-555555555555.jsonl'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
+  // A Codex session on the same PC (rollout format: codex-rs protocol.rs / models.rs).
+  const codexId = '019ac5e2-0000-7000-8000-00000000a001';
+  const codexHome = path.join(tmp, 'pc-codex');
+  const codexDay = path.join(codexHome, 'sessions', '2026', '11', '27');
+  fs.mkdirSync(codexDay, { recursive: true });
+  const rollout = [
+    { timestamp: t(1), type: 'session_meta', payload: { id: codexId, session_id: codexId, timestamp: t(1), cwd: '/home/dev/codex-app', cli_version: '0.120.0', source: 'cli', history_mode: 'legacy' } },
+    { timestamp: t(1), type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: t(1), type: 'event_msg', payload: { type: 'user_message', message: 'Codex, find the hidden key' } },
+    { timestamp: t(2), type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"cat codex-secret.txt"}', call_id: 'c1' } },
+    { timestamp: t(3), type: 'response_item', payload: { type: 'function_call_output', call_id: 'c1', output: 'Process exited with code 0\nOutput:\nCODEXSECRET' } },
+    { timestamp: t(4), type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found the codex key' }] } },
+    { timestamp: t(4), type: 'event_msg', payload: { type: 'task_complete', turn_id: 't1' } },
+  ];
+  fs.writeFileSync(path.join(codexDay, `rollout-2026-11-27T09-15-02-${codexId}.jsonl`), rollout.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
   const { key, entry } = newMachineKey('dev-laptop');
   const keys = path.join(tmp, 'keys.json');
   fs.writeFileSync(keys, JSON.stringify({ machines: [entry] }));
@@ -77,15 +93,15 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
   assert.equal(bad.status, 401);
 
   const pc = start({
-    CLAUDE_CONFIG_DIR: pcHome, AGENT_HUB_HEADLESS: '1', AGENT_HUB_SHARE: 'metadata',
+    CLAUDE_CONFIG_DIR: pcHome, CODEX_HOME: codexHome, AGENT_HUB_HEADLESS: '1', AGENT_HUB_SHARE: 'metadata',
     AGENT_HUB_REPORT_TO: `http://127.0.0.1:${ports.ingest}`, AGENT_HUB_REPORT_KEY: key,
   });
   const d = await waitFor(async () => {
     const r = await (await fetch(`http://127.0.0.1:${ports.web}/api/agents`)).json();
-    return r.agents.some((a) => a.remote) && r;
-  }, `the reporter's agent on the hub\n${pc.log}\n${hub.log}`);
+    return r.agents.filter((a) => a.remote).length === 2 && r;
+  }, `the reporter's agents on the hub\n${pc.log}\n${hub.log}`);
 
-  const a = d.agents.find((x) => x.remote);
+  const a = d.agents.find((x) => x.remote && x.kind !== 'codex');
   assert.equal(a.key, 'dev-laptop:11111111-2222-3333-4444-555555555555');
   assert.equal(a.machine, 'dev-laptop');
   assert.equal(a.share, 'metadata');
@@ -99,8 +115,15 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
   assert.equal(events[0].summary, undefined);
   assert.equal(events[1].ok, true);
   assert.equal(events[1].text, undefined);
+  const cx = d.agents.find((x) => x.remote && x.kind === 'codex');
+  assert.equal(cx.key, `dev-laptop:codex:${codexId}`);
+  assert.equal(cx.project, 'codex-app');
+  assert.equal(cx.toolCount, 1);
+  assert.equal(cx.status, 'offline');
+  assert.deepEqual(init.events[cx.key].map((e) => [e.kind, e.name ?? e.ok]), [['tool', 'exec_command'], ['result', true]]);
   const all = JSON.stringify(init);
-  for (const secret of ['Please fix', 'Sure, looking', 'cat private', 'Read the private', 'TOPSECRET', '/home/dev']) {
+  for (const secret of ['Please fix', 'Sure, looking', 'cat private', 'Read the private', 'TOPSECRET', '/home/dev',
+    'hidden key', 'codex-secret', 'CODEXSECRET', 'codex key']) {
     assert.equal(all.includes(secret), false, `"${secret}" reached the hub`);
   }
   // A viewer coming through the proxy name sees agents but not this PC's Claude setup.

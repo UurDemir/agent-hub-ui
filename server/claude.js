@@ -192,6 +192,7 @@ export class ClaudeCollector extends EventEmitter {
     else status = 'waiting';
 
     const cwd = info.cwd || tr.cwd || '';
+    const given = tr.agentName || info.name || tr.title;
     const since = info.statusUpdatedAt || tr.lastAt;
     const now = Date.now();
     return {
@@ -201,7 +202,8 @@ export class ClaudeCollector extends EventEmitter {
       live: s.live,
       kind: info.kind || '',
       canMessage: s.live && typeof info.messagingSocketPath === 'string' && !!info.messagingSocketPath,
-      name: tr.agentName || info.name || tr.title || clip(tr.lastPrompt, 60) || path.basename(cwd) || s.sessionId.slice(0, 8),
+      name: given || clip(tr.lastPrompt, 60) || path.basename(cwd) || s.sessionId.slice(0, 8),
+      nameFromPrompt: !given && !!tr.lastPrompt, // share.js keeps a prompt-made name on this machine
       title: tr.title,
       project: path.basename(cwd),
       cwd,
