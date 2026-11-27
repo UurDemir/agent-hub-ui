@@ -10,6 +10,7 @@ const AGENTS = [
   { id: 'windsurf', label: 'Windsurf', match: (p) => /^windsurf(\.exe)?$/.test(p.name) },
   { id: 'copilot-cli', label: 'GitHub Copilot CLI', match: (p) => p.name === 'copilot.exe' || /@github[\\/]copilot[\\/]/i.test(p.cmd) },
   { id: 'codex', label: 'OpenAI Codex CLI', match: (p) => /^codex(\.exe)?$/.test(p.name) || /@openai[\\/]codex[\\/]/i.test(p.cmd) },
+  { id: 'openclaw', label: 'OpenClaw', match: (p) => /^openclaw(-gateway)?(\.exe)?$/.test(p.name) || /openclaw[\\/](openclaw\.mjs|dist[\\/](entry|index)\.js)/i.test(p.cmd) },
   { id: 'gemini', label: 'Gemini CLI', match: (p) => /^gemini(\.exe)?$/.test(p.name) || /@google[\\/]gemini-cli[\\/]/i.test(p.cmd) },
   { id: 'aider', label: 'Aider', match: (p) => p.bins.includes('aider') },
   { id: 'opencode', label: 'opencode', match: (p) => /^opencode(\.exe)?$/.test(p.name) || /opencode-ai[\\/]/i.test(p.cmd) },

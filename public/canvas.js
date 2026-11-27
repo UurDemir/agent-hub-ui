@@ -232,7 +232,7 @@ function boxHTML(b) {
 }
 
 function bubbleHTML(b) {
-  const who = b.e.kind === 'say' ? 'CLAUDE' : promptWho(b.e, b.node.a);
+  const who = b.e.kind === 'say' ? agentWho(b.node.a) : promptWho(b.e, b.node.a);
   return `<div class="fl-bubble-h">${who} · ${fmtTime(b.e.t)}</div><div class="fl-bubble-t">${esc(b.e.text)}</div>`;
 }
 
@@ -532,7 +532,7 @@ function renderChrome() {
   if (!m?.nodes.length) {
     $('#fl-empty').innerHTML = FL.project
       ? `Nothing is running in this project right now.${FL.ended ? '' : ' Turn on <b>Ended</b> to see recent sessions.'}`
-      : 'No agents are running. Start Claude Code in any folder and it shows up here.';
+      : 'No agents are running. Start Claude Code or Codex in any folder and it shows up here.';
   }
 }
 
@@ -569,7 +569,7 @@ function renderPanel(agents, sel) {
       const evs = eventsAt(sel.key, nowT()).slice(-80);
       html = `<div class="fl-p-h"><b>${esc(sel.isSub ? sel.a.type : sel.a.name)}</b><a href="#/live/${encodeURIComponent(sel.key)}">open ↗</a></div><div class="fl-chat">${evs.map((e) => {
         if (e.kind === 'tool') return `<div class="fl-c-tool c-${e.cat}"><span class="chip">${esc(e.label)}</span>${esc(e.summary)}${e.result ? (e.result.ok ? ' <i class="ok">✓</i>' : ' <i class="err">✗</i>') : ''}</div>`;
-        if (e.kind === 'say' || e.kind === 'prompt') return `<div class="fl-c-msg ${e.kind}"><b>${e.kind === 'say' ? 'CLAUDE' : promptWho(e, sel.a)}</b> ${esc(e.text)}</div>`;
+        if (e.kind === 'say' || e.kind === 'prompt') return `<div class="fl-c-msg ${e.kind}"><b>${e.kind === 'say' ? agentWho(sel.a) : promptWho(e, sel.a)}</b> ${esc(e.text)}</div>`;
         return `<div class="fl-c-note">${esc(e.text)}</div>`;
       }).join('') || '<div class="fl-none">No activity recorded yet.</div>'}</div>`;
     }

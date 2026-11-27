@@ -89,12 +89,18 @@ const OTHER = shape({
   id: [M, S], label: [M, S], pids: [M, list(num, 1000)], memory: [M, count], startedAt: [M, num], cmd: [F, S],
 });
 
+// Below metadata's level no name goes out; below full, neither does a name made from a prompt
+// (an agent marks it with nameFromPrompt).
 export function shareAgents(agents, level) {
   const r = rank(level);
-  return list(AGENT, 500)(agents, r).map((a) => {
-    if (r < A) a.name = a.project || `session ${a.sessionId.slice(0, 8)}`;
-    return a;
-  });
+  const out = [];
+  for (const v of Array.isArray(agents) ? agents.slice(0, 500) : []) {
+    const a = AGENT(v, r);
+    if (!a) continue;
+    if (r < A || (r < F && v.nameFromPrompt === true)) a.name = a.project || `session ${a.sessionId.slice(0, 8)}`;
+    out.push(a);
+  }
+  return out;
 }
 
 export function shareEvents(events, level) {
