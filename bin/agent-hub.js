@@ -2,6 +2,8 @@
 // Command-line entry for `npx agent-hub-ui` / `agent-hub`: parses flags, then starts the server.
 import fs from 'node:fs';
 
+// The environment as the user started agent-hub, before flags are copied into it (--install-service checks it).
+const startEnv = { ...process.env };
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 const HELP = `Agent Hub ${pkg.version}
@@ -51,12 +53,27 @@ Run a hub that shows agents from many machines:
                              (repeatable). Such viewers don't get the Projects page.
       --viewer-password <p>  Ask for this password before showing the dashboard
                              (or set $AGENT_HUB_VIEWER_PASSWORD)
+      --viewer-password-file <f>
+                             The same, read from a file ($AGENT_HUB_VIEWER_PASSWORD_FILE)
+
+Run it in the background (per user; starts at login, restarts after a failure):
+      --install-service      Install and start a service that runs agent-hub with the other
+                             options on this command line, plus --no-open. Windows: scheduled
+                             task "Agent Hub"; macOS: LaunchAgent ui.agent-hub; Linux: systemd
+                             user unit agent-hub.service. Secrets must come from files
+                             (--report-key-file, --viewer-password-file)
+      --uninstall-service    Stop and remove it
+      --service-status       Show whether it's installed and running
+      --print-service        Show what --install-service would write and run, then exit
 
 Reads Claude Code's state from ~/.claude (or $CLAUDE_CONFIG_DIR). Never writes to it.`;
 
 const args = process.argv.slice(2);
 const allowed = [];
 let open = true;
+const SERVICE_ACTIONS = ['--install-service', '--uninstall-service', '--service-status', '--print-service'];
+const service = [...new Set(args.filter((a) => SERVICE_ACTIONS.includes(a)))];
+if (service.length > 1) { console.error(`Use only one of ${service.join(', ')}`); process.exit(1); }
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   const flag = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
@@ -90,9 +107,11 @@ for (let i = 0; i < args.length; i++) {
     case '--tls-cert': process.env.AGENT_HUB_TLS_CERT = value(); break;
     case '--tls-key': process.env.AGENT_HUB_TLS_KEY = value(); break;
     case '--allowed-host': allowed.push(value()); break;
+    case '--install-service': case '--uninstall-service': case '--service-status': case '--print-service': break;
+    case '--viewer-password-file': process.env.AGENT_HUB_VIEWER_PASSWORD_FILE = value(); break;
     case '--viewer-password':
       process.env.AGENT_HUB_VIEWER_PASSWORD = value();
-      console.warn('Note: other users of this machine can see --viewer-password in the process list. $AGENT_HUB_VIEWER_PASSWORD keeps it out.');
+      if (!service.length) console.warn('Note: other users of this machine can see --viewer-password in the process list. $AGENT_HUB_VIEWER_PASSWORD keeps it out.');
       break;
     case '--new-key': {
       const { newMachineKey } = await import('../server/hub.js');
@@ -114,6 +133,11 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (allowed.length) process.env.AGENT_HUB_ALLOWED_HOSTS = [process.env.AGENT_HUB_ALLOWED_HOSTS, ...allowed].filter(Boolean).join(',');
-if (open && process.env.AGENT_HUB_HEADLESS !== '1') process.env.AGENT_HUB_OPEN = '1';
-await import('../server/index.js');
+if (service.length) {
+  const { runService } = await import('./service.js');
+  process.exitCode = runService(service[0], { args, env: startEnv });
+} else {
+  if (allowed.length) process.env.AGENT_HUB_ALLOWED_HOSTS = [process.env.AGENT_HUB_ALLOWED_HOSTS, ...allowed].filter(Boolean).join(',');
+  if (open && process.env.AGENT_HUB_HEADLESS !== '1') process.env.AGENT_HUB_OPEN = '1';
+  await import('../server/index.js');
+}

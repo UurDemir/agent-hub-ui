@@ -73,7 +73,9 @@ const HEADLESS = env.AGENT_HUB_HEADLESS === '1';
 // --metrics: Prometheus counts at /metrics, behind the same Host check and viewer password.
 const METRICS = env.AGENT_HUB_METRICS === '1';
 const HUB = env.AGENT_HUB_HUB === '1';
-const VIEWER_PASSWORD = env.AGENT_HUB_VIEWER_PASSWORD || '';
+const VIEWER_PASSWORD = env.AGENT_HUB_VIEWER_PASSWORD
+  || (env.AGENT_HUB_VIEWER_PASSWORD_FILE ? readSecret(env.AGENT_HUB_VIEWER_PASSWORD_FILE) : '');
+if (env.AGENT_HUB_VIEWER_PASSWORD_FILE && !VIEWER_PASSWORD) die(`${env.AGENT_HUB_VIEWER_PASSWORD_FILE} is empty; put the viewer password in it.`);
 const viewerHash = VIEWER_PASSWORD && digest(VIEWER_PASSWORD);
 
 if (HUB && !env.AGENT_HUB_KEYS && !env.AGENT_HUB_MACHINES) die('--hub needs --hub-keys <file>: the machines allowed to report. Create entries with --new-key <name>.');

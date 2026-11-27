@@ -85,7 +85,7 @@ Reporters send to its ingest port (4318, all interfaces). That port only accepts
 AGENT_HUB_REPORT_KEY=ahk_… npx agent-hub-ui --report-to https://hub.example.com:4318 --share metadata
 ```
 
-Add `--headless` to report without opening the local dashboard, for example as a background service. `--report-key-file <file>` reads the key from a file instead. Use a self-signed hub certificate by pointing `NODE_EXTRA_CA_CERTS` at it. The reporter refuses a plain `http://` hub that isn't on the same machine unless you pass `--allow-http`.
+Add `--headless` to report without opening the local dashboard, for example as a background service (see [Run it in the background](#run-it-in-the-background)). `--report-key-file <file>` reads the key from a file instead. Use a self-signed hub certificate by pointing `NODE_EXTRA_CA_CERTS` at it. The reporter refuses a plain `http://` hub that isn't on the same machine unless you pass `--allow-http`.
 
 **What leaves the machine** is set on the machine itself with `--share`, and the hub can only lower it:
 
@@ -109,6 +109,7 @@ The hub keeps everything in memory: the last 200 events per session, like a norm
 | `--tls-cert <file>` / `--tls-key <file>` | Serve the ingest port over HTTPS |
 | `--allowed-host <host>` | Accept this `Host` header, e.g. your proxy's public name (repeatable) |
 | `--viewer-password <p>` | Require this password for the dashboard |
+| `--viewer-password-file <file>` | The same, read from a file |
 
 | Reporter options | |
 |---|---|
@@ -137,6 +138,29 @@ services:
 ```
 
 Machines in `AGENT_HUB_MACHINES` are read at startup, so revoking one means editing the variable and restarting the container (a mounted keys file with `AGENT_HUB_KEYS` is re-read on change instead). The image is only meant as a hub: don't mount a `~/.claude` into it. To serve the ingest port over HTTPS, mount a certificate and set `AGENT_HUB_TLS_CERT` and `AGENT_HUB_TLS_KEY`. Without one, machines report with `--allow-http`, so do that only on a network you trust or over a VPN.
+
+### Run it in the background
+
+`--install-service` sets up a per-user service that runs Agent Hub with the other options on the same command line (plus `--no-open`). It starts when you log in and restarts after a failure. This works for a reporter, a hub or a plain local dashboard. Install the package first (`npm i -g agent-hub-ui`): the service runs the installed copy by its full path, and a copy in npx's cache can be cleaned up.
+
+```
+# Windows: scheduled task "Agent Hub", started hidden at logon
+agent-hub --install-service --report-to https://nas:4318 --report-key-file C:\Users\me\.agent-hub-key --headless
+
+# macOS: LaunchAgent ~/Library/LaunchAgents/ui.agent-hub.plist
+agent-hub --install-service --report-to https://nas:4318 --report-key-file ~/.agent-hub-key --headless
+
+# Linux: systemd user unit ~/.config/systemd/user/agent-hub.service
+agent-hub --install-service --report-to https://nas:4318 --report-key-file ~/.agent-hub-key --headless
+loginctl enable-linger $USER   # optional: keep it running while you're logged out
+```
+
+- `--print-service` shows the files and commands without changing anything.
+- `--service-status` shows whether it's installed and running.
+- `--uninstall-service` stops it and removes it.
+- Logs go to `%LOCALAPPDATA%\agent-hub\agent-hub.log` on Windows, `~/Library/Logs/agent-hub.log` on macOS, and the journal on Linux (`journalctl --user -u agent-hub -f`).
+
+Secrets aren't written into the service definition. Give the machine key with `--report-key-file` and the viewer password with `--viewer-password-file`; `--viewer-password`, `$AGENT_HUB_REPORT_KEY` and `$AGENT_HUB_VIEWER_PASSWORD` are refused. Relative paths are made absolute. The service keeps a few non-secret variables from the shell you install it from, such as `CLAUDE_CONFIG_DIR` and `NODE_EXTRA_CA_CERTS`. If you upgrade or move Node.js or Agent Hub, run `--install-service` again.
 
 ## How it works
 
