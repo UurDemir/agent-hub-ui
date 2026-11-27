@@ -9,7 +9,8 @@ import { shareAgents, shareEvents } from '../server/share.js';
 
 // Synthetic entries with the field names OpenClaw writes (pi session format: packages/agent-core,
 // packages/llm-core; the same JSON as a JSONL line or a transcript_events row).
-const at = (s) => new Date(Date.now() - 120e3 + s * 1000).toISOString();
+const T0 = Date.now() - 120e3; // one clock reading, so durations between entries are exact
+const at = (s) => new Date(T0 + s * 1000).toISOString();
 const msg = (s, id, message) => ({ type: 'message', id, parentId: null, timestamp: at(s), message });
 const usage = (input, output, total) => ({ input, output, cacheRead: 1000, cacheWrite: 0, totalTokens: input + output + 1000, cost: { total } });
 
