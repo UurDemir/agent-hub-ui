@@ -142,6 +142,9 @@ export class Hub extends EventEmitter {
       this.machines.set(entry.name, m);
     }
     this.dirty = true;
+    // The keys file lowered this machine's level: what the hub already keeps from it, archive
+    // included, drops to the new level too.
+    if (m.share && level !== m.share && minLevel(level, m.share) === level) this.lowerLevel(m, level);
     const wasOnline = m.online;
     Object.assign(m, {
       seq: body.seq, lastSeen: now, online: true, share: level,
@@ -180,6 +183,22 @@ export class Hub extends EventEmitter {
     m.keys = new Set(m.agents.flatMap((a) => [a.key, ...a.subagents.map((s) => s.key)]));
     for (const a of before) if (!m.keys.has(a.key)) this.archiveAgent(m, a, now);
     for (const k of m.events.keys()) if (!m.keys.has(k)) m.events.delete(k);
+  }
+
+  lowerLevel(m, level) {
+    const again = (a) => {
+      const [x] = shareAgents([a], level);
+      return x && { ...x, subagents: x.subagents.map((s) => ({ ...s })), machine: m.name, remote: true, share: level };
+    };
+    m.agents = m.agents.map(again).filter(Boolean);
+    for (const [k, evs] of m.events) m.events.set(k, shareEvents(evs, level));
+    for (const [k, x] of m.archive) {
+      const agent = again(x.agent);
+      if (!agent) { m.archive.delete(k); continue; }
+      m.archive.set(k, { ...x, agent, events: Object.fromEntries(Object.entries(x.events).map(([ek, evs]) => [ek, shareEvents(evs, level)])) });
+    }
+    m.share = level;
+    this.dirty = true;
   }
 
   // An ended session the reporter no longer lists, kept for the History page.

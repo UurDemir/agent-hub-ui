@@ -171,3 +171,19 @@ test('a machine silent for hours moves its sessions to the archive and is forgot
   hub.sweep(2 * 86400e3);
   assert.equal(hub.list().length, 0);
 });
+
+test('lowering a machine in the keys file lowers what the hub already kept from it, archive included', () => {
+  const hub = new Hub();
+  const full = { name: 'pc-1', share: 'full' };
+  hub.ingest(full, report({ init }));
+  hub.ingest(full, report({ seq: 2, agents: [agent({ key: 's2', sessionId: 's2', subagents: [] })] }));
+  assert.equal(hub.archived('pc-1:s1').events['pc-1:s1'][0].detail, 'ls -la');
+  hub.ingest({ name: 'pc-1', share: 'metadata' }, report({ seq: 3 }));
+  const x = hub.archived('pc-1:s1');
+  assert.equal(x.events['pc-1:s1'][0].detail, undefined);
+  assert.equal(x.events['pc-1:s1'][0].summary, undefined);
+  assert.equal(x.agent.cwd, undefined);
+  assert.equal(x.agent.share, 'metadata');
+  assert.equal(hub.snapshot()[0].cwd, undefined);
+  assert.equal(hub.list()[0].share, 'metadata');
+});
