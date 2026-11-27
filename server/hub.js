@@ -146,7 +146,7 @@ export class Hub extends EventEmitter {
       // the new snapshot no longer lists move to the archive in setAgents().
       const prev = m;
       m = {
-        name: entry.name, instance, connectedAt: now, others: [], share: prev?.share,
+        name: entry.name, instance, connectedAt: now, others: [], share: prev?.share, marked: prev?.marked,
         agents: prev?.agents || [], events: prev?.events || new Map(), keys: prev?.keys || new Set(), archive: prev?.archive || new Map(),
       };
       this.machines.set(entry.name, m);
@@ -219,13 +219,13 @@ export class Hub extends EventEmitter {
       return x && { ...x, subagents: x.subagents.map((s) => ({ ...s })), machine: m.name, remote: true, share: level };
     };
     const evsAgain = (evs, distrust) => shareEvents(distrust ? distrustEvents(evs) : evs, level);
-    const live = below && m.marked === false;
+    const live = below && m.marked !== true;
     m.agents = m.agents.map((a) => again(a, live)).filter(Boolean);
     for (const [k, evs] of m.events) m.events.set(k, evsAgain(evs, live));
     if (below) m.marked = true;
     m.others = shareOthers(m.others, level).map((o) => ({ ...o, machine: m.name }));
     for (const [k, x] of m.archive) {
-      const distrust = below && x.marked === false;
+      const distrust = below && x.marked !== true;
       const agent = again(x.agent, distrust);
       if (!agent) { m.archive.delete(k); continue; }
       m.archive.set(k, {
@@ -245,7 +245,7 @@ export class Hub extends EventEmitter {
     m.archive.delete(a.key);
     m.archive.set(a.key, {
       agent: { ...a, live: false, status: 'offline', now: { verb: 'Ended', since: a.lastAt || now } },
-      events, endedAt: now, marked: m.marked !== false,
+      events, endedAt: now, marked: m.marked === true, // missing means unknown: untrusted
     });
     while (m.archive.size > MAX_ARCHIVE) m.archive.delete(m.archive.keys().next().value);
     this.dirty = true;
@@ -277,7 +277,7 @@ export class Hub extends EventEmitter {
       v: 1, savedAt: Date.now(),
       machines: [...this.machines.values()].map((m) => ({
         name: m.name, host: m.host, version: m.version, share: m.share, lastSeen: m.lastSeen, connectedAt: m.connectedAt,
-        agents: m.agents, others: m.others, events: [...m.events], archive: [...m.archive], marked: m.marked !== false,
+        agents: m.agents, others: m.others, events: [...m.events], archive: [...m.archive], marked: m.marked === true,
       })),
     };
     const file = path.join(this.dataDir, STATE_FILE);

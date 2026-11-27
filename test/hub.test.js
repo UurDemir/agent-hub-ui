@@ -294,3 +294,23 @@ test('an upgraded reporter does not vouch for what its older version sent', () =
   assert.equal(h2.archived('pc-1:s1').events['pc-1:s1'][0].summary, undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("a restarted old reporter's sessions stay unmarked when archived by the next instance", () => {
+  const a = agent({ name: 'fix the login bug' });
+  let cap = 'full';
+  const hub = new Hub({ levelFor: () => cap });
+  const full = { name: 'pc-1', share: 'full' };
+  hub.ingest(full, report({ version: '0.4.1', init: { agents: [a], others: [], events: { s1: [{ ...tool, summary: 'the launch slips' }] } } }), 0);
+  // A new (current) instance's init archives what the old one sent.
+  hub.ingest(full, report({ version: '0.6.0', instance: 'i2', seq: 1, init: { agents: [], others: [], events: {} } }), 60e3);
+  assert.equal(hub.archived('pc-1:s1').marked, false);
+  cap = 'activity';
+  hub.sweep(61e3);
+  assert.equal(hub.archived('pc-1:s1').agent.name, 'app');
+  assert.equal(hub.archived('pc-1:s1').events['pc-1:s1'][0].summary, undefined);
+  // What the current instance sends is trusted.
+  const hub2 = new Hub();
+  hub2.ingest(full, report({ version: '0.6.0', init: { agents: [a], others: [], events: { s1: [tool] } } }), 0);
+  hub2.ingest(full, report({ version: '0.6.0', seq: 2, agents: [] }), 1000);
+  assert.equal(hub2.archived('pc-1:s1').marked, true);
+});
