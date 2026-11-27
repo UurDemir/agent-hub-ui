@@ -242,7 +242,7 @@ function renderMachines() {
   $('#machines').innerHTML = ms.map((m) => `
     <div class="other machine ${state.machine === m.id ? 'on' : ''}" data-machine="${esc(m.id)}" title="${esc(m.local ? 'This PC' : `${m.host || ''} · agent-hub-ui ${m.version || '?'}`)}">
       <span class="dot ${!m.online ? '' : liveOn(m.id) ? 's-working' : 's-idle'}"></span>
-      <div><div class="nm">${esc(m.name)}${m.local ? ' <span class="tag">this PC</span>' : ''}</div>
+      <div><div class="nm">${esc(m.name)}${m.local ? ' <span class="tag">this PC</span>' : ''}${m.outdated ? ` <span class="tag warn" title="This machine runs agent-hub-ui ${esc(m.version || '(unknown version)')}. Update it: older reporters can't let this hub keep prompt text out of names and tool summaries when it lowers their sharing level.">update</span>` : ''}</div>
       <div class="m">${liveOn(m.id)} running${m.local ? '' : ` · ${esc(m.share || '')}`}${m.online ? '' : ` · offline, last seen <span data-since="${Number(m.lastSeen) || 0}"></span> ago`}</div></div>
     </div>`).join('');
 }
@@ -520,7 +520,53 @@ function detailHeadHTML(a) {
           <span class="m">${s.status === 'working' ? esc(s.now?.verb || '') : STATUS_LABEL[s.status]} · ${s.toolCount} tools</span>
         </div>`).join('')}</div></div>`;
   }
+  html += filesChangedHTML(a.key, state.events.get(a.key) || []);
   return html;
+}
+
+/* ---------------- files changed ---------------- */
+
+// Tools that change files, across Claude Code, Codex and OpenClaw.
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'write', 'edit']);
+
+// [{ path, n, failed, events }] for the edits among `events`. Paths come from the tool's input
+// (its detail); below the full sharing level there is none, so the summary's file name is used.
+function changedFiles(events) {
+  const files = new Map();
+  for (const e of events) {
+    if (e.kind !== 'tool' || !EDIT_TOOLS.has(e.name)) continue;
+    const d = typeof e.detail === 'string' ? e.detail : '';
+    let paths;
+    if (e.name === 'apply_patch') paths = [...d.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1].trim());
+    else if (e.name === 'MultiEdit' || e.name === 'NotebookEdit') {
+      try { const j = JSON.parse(d); paths = [j.file_path || j.notebook_path]; } catch { paths = []; }
+    } else paths = [d.split('\n')[0].trim()];
+    paths = paths.filter(Boolean);
+    if (!paths.length && e.summary) paths = e.summary.split(', ').filter((p) => p && !/ \+\d+ files$/.test(p));
+    for (const p of paths) {
+      const f = files.get(p) || { path: p, n: 0, failed: 0, events: [] };
+      f.n++;
+      if (e.result && !e.result.ok) f.failed++;
+      f.events.push(e);
+      files.set(p, f);
+    }
+  }
+  return [...files.values()].sort((a, b) => b.events.at(-1).t - a.events.at(-1).t);
+}
+
+function filesChangedHTML(key, events) {
+  const files = changedFiles(events);
+  if (!files.length) return '';
+  const split = (p) => { const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); return i < 0 ? ['', p] : [p.slice(0, i + 1), p.slice(i + 1)]; };
+  return `<div class="d-section"><h4>Files changed · ${files.length}</h4><div class="files-changed">${files.map((f) => {
+    const id = `files:${key}:${f.path}`;
+    const open = state.expanded.has(id);
+    const [dir, name] = split(f.path);
+    return `<div class="fc-row ${open ? 'open' : ''}" data-files="${esc(id)}" title="${esc(f.path)}">
+        <span class="fc-name">${esc(name)}</span><span class="fc-dir">${esc(dir)}</span>
+        <span class="m">${f.n}×${f.failed ? ` · <span class="err">${f.failed} failed</span>` : ''}</span>
+      </div>${open ? f.events.slice().reverse().map((e) => `<pre class="fc-diff">${fmtTime(e.t)} · ${esc(e.label)}${e.result && !e.result.ok ? ' · failed' : ''}\n${esc(e.detail ?? NOT_SHARED)}</pre>`).join('') : ''}`;
+  }).join('')}</div></div>`;
 }
 
 function eventHTML(e, a) {
@@ -687,6 +733,8 @@ function connect() {
     state.reporting = d.reporting || null;
     state.projectsOn = d.projects !== false;
     $('#tabs a[data-view="projects"]').hidden = !state.projectsOn;
+    // History and Usage show this PC's transcripts (on this PC only) and a hub's archive.
+    for (const v of ['history', 'usage']) $(`#tabs a[data-view="${v}"]`).hidden = !state.projectsOn && !d.machines;
     renderReporting();
     setConn(true, d.host);
     setMachines(d.machines || null);
@@ -731,6 +779,14 @@ document.addEventListener('click', (ev) => {
   if (sel) return select(sel.dataset.select);
   const card = ev.target.closest('.card, .lane');
   if (card) return select(card.dataset.key);
+  const files = ev.target.closest('[data-files]');
+  if (files) {
+    const fid = files.dataset.files;
+    if (state.expanded.has(fid)) state.expanded.delete(fid); else state.expanded.add(fid);
+    if (files.closest('#detail')) renderDetail();
+    else if (typeof renderHistoryDetail === 'function') renderHistoryDetail();
+    return;
+  }
   const tool = ev.target.closest('.ev-tool');
   const body = ev.target.closest('.ev-say .body');
   const id = tool?.dataset.id || body?.dataset.id;

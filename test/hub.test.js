@@ -110,3 +110,64 @@ test('keyring takes the machines inline, as from $AGENT_HUB_MACHINES', () => {
   assert.equal(ring.match('ahk_wrong'), null);
   assert.throws(() => new Keyring(undefined, '{"machines":{}}'), /AGENT_HUB_MACHINES: expected/);
 });
+
+test('sessions a reporter stops listing move to the archive, and History can search them', () => {
+  const hub = new Hub();
+  hub.ingest(entry, report({ init }));
+  hub.ingest(entry, report({ seq: 2, agents: [agent({ key: 's2', sessionId: 's2', subagents: [] })] }));
+  assert.deepEqual(hub.snapshot().map((a) => a.key), ['pc-1:s2']);
+  const [h] = hub.history();
+  assert.equal(h.key, 'pc-1:s1');
+  assert.equal(h.machine, 'pc-1');
+  assert.equal(h.agent.status, 'offline');
+  assert.deepEqual(Object.keys(hub.archived('pc-1:s1').events), ['pc-1:s1']);
+  assert.equal(hub.history({ q: 'ls' }).length, 1, 'search looks at what was shared');
+  assert.equal(hub.history({ q: 'nothing like this' }).length, 0);
+  // A restarted reporter (new instance) keeps the archive.
+  hub.ingest(entry, report({ instance: 'i2', seq: 1, init: { agents: [], others: [], events: {} } }), Date.now() + 60e3);
+  assert.equal(hub.history().length, 2, 's2 is archived too');
+});
+
+test('with a data dir the hub keeps its machines and history across restarts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-data-'));
+  const a = new Hub({ dataDir: dir });
+  a.ingest(entry, report({ init }));
+  a.ingest(entry, report({ seq: 2, agents: [] }));
+  a.save();
+  assert.ok(fs.existsSync(path.join(dir, 'hub-state.json')));
+  const b = new Hub({ dataDir: dir });
+  b.load();
+  assert.equal(b.list()[0].name, 'pc-1');
+  assert.equal(b.list()[0].online, false, 'restored machines wait for their next report');
+  assert.equal(b.history()[0].key, 'pc-1:s1');
+  assert.equal(b.archived('pc-1:s1').events['pc-1:s1'][0].summary, 'ls');
+  // The reporter has to start over with a full snapshot.
+  assert.deepEqual(b.ingest(entry, report({ seq: 3 })).body, { ok: true, needInit: true });
+
+  // What's restored goes through share.js again: a tampered file can't add fields or other machines.
+  const file = path.join(dir, 'hub-state.json');
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  data.machines[0].share = 'metadata';
+  data.machines[0].archive[0][1].agent.evil = '<script>';
+  data.machines[0].archive.push(['other-pc:x', data.machines[0].archive[0][1]]);
+  data.machines.push({ name: '../bad', share: 'full', lastSeen: Date.now() });
+  fs.writeFileSync(file, JSON.stringify(data));
+  const c = new Hub({ dataDir: dir });
+  c.load();
+  assert.deepEqual(c.list().map((m) => m.name), ['pc-1']);
+  assert.deepEqual(c.history().map((h) => h.key), ['pc-1:s1']);
+  assert.equal(c.history()[0].agent.evil, undefined);
+  assert.equal(c.archived('pc-1:s1').events['pc-1:s1'][0].summary, undefined, 'the stored level applies');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a machine silent for hours moves its sessions to the archive and is forgotten after the retention', () => {
+  const hub = new Hub({ retainDays: 1 });
+  hub.ingest(entry, report({ init }), 0);
+  hub.sweep(4 * 3600e3);
+  assert.equal(hub.snapshot().length, 0);
+  assert.equal(hub.history().length, 1);
+  assert.equal(hub.list().length, 1, 'the machine is still listed, offline');
+  hub.sweep(2 * 86400e3);
+  assert.equal(hub.list().length, 0);
+});

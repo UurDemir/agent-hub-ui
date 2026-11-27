@@ -89,6 +89,8 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
     return ingest && web && { ingest, web };
   }, `the hub to start\n${hub.log}`);
 
+  assert.deepEqual(await (await fetch(`http://127.0.0.1:${ports.web}/healthz`)).json(), { ok: true });
+  assert.equal((await fetch(`http://127.0.0.1:${ports.web}/metrics`)).status, 404, 'metrics are off unless --metrics');
   const bad = await fetch(`http://127.0.0.1:${ports.ingest}/ingest`, { method: 'POST', headers: { Authorization: 'Bearer ahk_wrong' }, body: '{}' });
   assert.equal(bad.status, 401);
 
@@ -108,6 +110,7 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
   assert.equal(a.project, 'demo-app');
   assert.equal(a.toolCount, 1);
   assert.deepEqual(d.machines.map((m) => [m.id, m.online]), [['@local', true], ['dev-laptop', true]]);
+  assert.equal(d.machines.find((m) => m.id === 'dev-laptop').outdated, false, 'this version is current');
 
   const init = await streamInit(ports.web);
   const events = init.events[a.key];

@@ -18,8 +18,16 @@ COPY public/ public/
 ENV HOST=0.0.0.0 \
     PORT=4317 \
     AGENT_HUB_INGEST_PORT=4318 \
+    AGENT_HUB_DATA_DIR=/data \
     NODE_ENV=production
 EXPOSE 4317 4318
 
+# The hub's state (machines, sessions, History) survives restarts here; mount a volume on it.
+RUN mkdir -p /data && chown node:node /data
+VOLUME /data
+
 USER node
+# /healthz answers before the viewer login and carries no session data.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4317)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 ENTRYPOINT ["node", "bin/agent-hub.js", "--no-open"]
