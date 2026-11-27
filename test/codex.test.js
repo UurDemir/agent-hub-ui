@@ -55,7 +55,7 @@ test('turns a Codex rollout into prompt, tool, result and say events', () => {
     ['exec_command', 'run', 'npm test'],
     ['apply_patch', 'edit', 'sum.js'],
     ['update_plan', 'plan', '2 steps'],
-    ['mcp__github__list_issues', 'mcp', 'acme/app'],
+    ['mcp__github__list_issues', 'mcp', ''], // argument text stays in the detail (full only)
   ]);
   assert.equal(tools[3].label, 'github · list_issues');
 

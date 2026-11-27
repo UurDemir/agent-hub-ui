@@ -96,11 +96,14 @@ function toolSummary(name, args, input) {
     case 'view_image': return base(args.path);
     case 'update_plan': return `${(args.plan || []).length} steps`;
     case 'spawn_agent': return args.agent_type || 'Subagent'; // the task itself is a prompt: detail only
-    case 'request_user_input': return firstLine(args.question || args.prompt || 'Question');
+    case 'send_input': case 'send_message': case 'followup_task': case 'resume_agent': return 'Message to a subagent';
+    case 'request_user_input': return 'Question';
+    case 'web_search': return args.query;
   }
-  if (input) return firstLine(input);
-  const v = Object.values(args).find((x) => typeof x === 'string');
-  return firstLine(v);
+  // Summaries are shared from the activity level (details only at full), so other tools, including
+  // freeform custom tools, only get one of these plain fields.
+  const k = ['path', 'pattern', 'query'].find((x) => typeof args[x] === 'string');
+  return k ? firstLine(k === 'path' ? base(args[k]) : args[k]) : '';
 }
 
 function toolDetail(name, args, input) {
