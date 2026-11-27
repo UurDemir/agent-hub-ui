@@ -13,7 +13,7 @@ function start() {
   const port = 41000 + Math.floor(Math.random() * 8000);
   const child = spawn(process.execPath, [SERVER], {
     env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', AGENT_HUB_ALLOW_SEND: '1', AGENT_HUB_OPEN: '',
-      CLAUDE_CONFIG_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'agent-hub-send-')), CODEX_HOME: path.join(os.tmpdir(), 'agent-hub-no-codex'), OPENCLAW_STATE_DIR: path.join(os.tmpdir(), 'agent-hub-no-openclaw'), GEMINI_CLI_HOME: path.join(os.tmpdir(), 'agent-hub-no-gemini'), COPILOT_HOME: path.join(os.tmpdir(), 'agent-hub-no-copilot') },
+      CLAUDE_CONFIG_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'agent-hub-send-')), CODEX_HOME: path.join(os.tmpdir(), 'agent-hub-no-codex'), OPENCLAW_STATE_DIR: path.join(os.tmpdir(), 'agent-hub-no-openclaw'), GEMINI_CLI_HOME: path.join(os.tmpdir(), 'agent-hub-no-gemini'), COPILOT_HOME: path.join(os.tmpdir(), 'agent-hub-no-copilot'), XDG_DATA_HOME: path.join(os.tmpdir(), 'agent-hub-no-xdg-data') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';

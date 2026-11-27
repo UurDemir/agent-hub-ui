@@ -13,6 +13,7 @@ import { CodexCollector } from './codex.js';
 import { OpenClawCollector } from './openclaw.js';
 import { GeminiCollector } from './gemini.js';
 import { CopilotCollector } from './copilot.js';
+import { OpenCodeCollector } from './opencode.js';
 import { Sources } from './sources.js';
 import { metrics } from './metrics.js';
 import { Notifier } from './notify.js';
@@ -106,10 +107,11 @@ const codex = new CodexCollector({ running: runs('codex') });
 const openclaw = new OpenClawCollector({ running: runs('openclaw') });
 const gemini = new GeminiCollector({ running: runs('gemini') });
 const copilot = new CopilotCollector({ running: runs('copilot-cli') });
-const sources = new Sources([claude, codex, openclaw, gemini, copilot]);
+const opencode = new OpenCodeCollector({ running: runs('opencode') });
+const sources = new Sources([claude, codex, openclaw, gemini, copilot, opencode]);
 // A tool with its own collector is listed with the other AI tools only while none of its sessions
 // shows up as an agent (process id in processes.js -> collector).
-const COLLECTED = { codex, openclaw, gemini, 'copilot-cli': copilot };
+const COLLECTED = { codex, openclaw, gemini, 'copilot-cli': copilot, opencode };
 const localOthers = () => procs.others.filter((o) => !COLLECTED[o.id]?.hasLive());
 const catalog = new ProjectCatalog(claude);
 const history = new LocalHistory();

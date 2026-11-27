@@ -19,7 +19,7 @@ after(() => {
 });
 
 function start(env) {
-  const child = spawn(process.execPath, [SERVER], { env: { ...process.env, CODEX_HOME: path.join(tmp, 'no-codex'), OPENCLAW_STATE_DIR: path.join(tmp, 'no-openclaw'), GEMINI_CLI_HOME: path.join(tmp, 'no-gemini'), COPILOT_HOME: path.join(tmp, 'no-copilot'), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [SERVER], { env: { ...process.env, CODEX_HOME: path.join(tmp, 'no-codex'), OPENCLAW_STATE_DIR: path.join(tmp, 'no-openclaw'), GEMINI_CLI_HOME: path.join(tmp, 'no-gemini'), COPILOT_HOME: path.join(tmp, 'no-copilot'), XDG_DATA_HOME: path.join(tmp, 'no-xdg-data'), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   children.push(child);
   child.log = '';
   child.stdout.on('data', (d) => { child.log += d; });
