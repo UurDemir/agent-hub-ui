@@ -263,3 +263,34 @@ test('an old reporter first kept at full is still treated as free text when lowe
   assert.equal(h2.allEvents(200)['pc-1:s1'][0].summary, undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('an upgraded reporter does not vouch for what its older version sent', () => {
+  const a = agent({ name: 'fix the login bug', now: { verb: 'Calling', label: 'slack · post', summary: 'the launch slips', cat: 'mcp', since: 1 } });
+  let cap = 'full';
+  const hub = new Hub({ levelFor: () => cap });
+  const full = { name: 'pc-1', share: 'full' };
+  // 0.4.1 at full: its session ends and is archived…
+  hub.ingest(full, report({ version: '0.4.1', init: { agents: [a], others: [], events: { s1: [{ ...tool, summary: 'the launch slips' }] } } }), 0);
+  hub.ingest(full, report({ version: '0.4.1', seq: 2, agents: [] }), 1000);
+  // …then the machine upgrades (new instance, current version) and later the keys file lowers it.
+  hub.ingest(full, report({ version: '0.6.0', instance: 'i2', seq: 1, init: { agents: [], others: [], events: {} } }), 60e3);
+  assert.equal(hub.archived('pc-1:s1').marked, false);
+  cap = 'activity';
+  hub.sweep(61e3);
+  const x = hub.archived('pc-1:s1');
+  assert.equal(x.agent.name, 'app', "the old version's prompt-made name is dropped");
+  assert.equal(x.events['pc-1:s1'][0].summary, undefined);
+
+  // The same survives a restart: the mark is saved with each record.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-data-'));
+  const h1 = new Hub({ dataDir: dir });
+  h1.ingest(full, report({ version: '0.4.1', init: { agents: [a], others: [], events: { s1: [{ ...tool, summary: 'the launch slips' }] } } }));
+  h1.ingest(full, report({ version: '0.4.1', seq: 2, agents: [] }));
+  h1.ingest(full, report({ version: '0.6.0', instance: 'i2', seq: 1, init: { agents: [], others: [], events: {} } }), Date.now() + 60e3);
+  h1.save();
+  const h2 = new Hub({ dataDir: dir, levelFor: () => 'activity' });
+  h2.load();
+  assert.equal(h2.archived('pc-1:s1').agent.name, 'app');
+  assert.equal(h2.archived('pc-1:s1').events['pc-1:s1'][0].summary, undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -168,9 +168,15 @@ export class Hub extends EventEmitter {
     const agentsIn = (list) => (legacy ? distrustAgents(list) : list);
     const eventsIn = (evs) => (legacy ? distrustEvents(evs) : evs);
 
+    // Whether what this report brings can be lowered later as is: below full it's already filtered;
+    // at full, only a current reporter has marked its prompt-made names and free-text summaries.
+    // setAgents() archives the previous data with the previous mark, then this one applies.
+    const marked = level !== 'full' || !versionBelow(m.version, MIN_REPORTER);
+
     let agentsChanged = !wasOnline || fresh;
     if (isObj(body.init)) {
       this.setAgents(m, agentsIn(body.init.agents), level, now); // archives what's gone, with its events
+      m.marked = marked;
       m.events.clear();
       m.others = this.prefixOthers(m, body.init.others, level);
       const initEvents = isObj(body.init.events) ? Object.fromEntries(Object.entries(body.init.events).map(([k, v]) => [k, eventsIn(v)])) : {};
@@ -180,6 +186,7 @@ export class Hub extends EventEmitter {
       this.emit('others');
     } else {
       if (Array.isArray(body.agents)) { this.setAgents(m, agentsIn(body.agents), level, now); agentsChanged = true; }
+      m.marked = marked; // same reporter instance as the data already kept (fresh ones send init)
       if (Array.isArray(body.others)) { m.others = this.prefixOthers(m, body.others, level); this.emit('others'); }
       for (const batch of Array.isArray(body.events) ? body.events.slice(0, 2000) : []) {
         if (isObj(batch) && typeof batch.key === 'string') this.addEvents(m, batch.key, shareEvents(eventsIn(batch.events), level), true);
@@ -203,21 +210,28 @@ export class Hub extends EventEmitter {
   }
 
   lowerLevel(m, level) {
-    // Data an old reporter sent at full has no freeText / nameFromPrompt marks.
-    const legacy = level !== 'full' && versionBelow(m.version, MIN_REPORTER);
-    const mark = (a) => (legacy ? distrustAgents([a])[0] : a);
-    const markEvents = (evs) => (legacy ? distrustEvents(evs) : evs);
-    const again = (a) => {
-      const [x] = shareAgents([mark(a)], level);
+    // Data an old reporter sent at full has no freeText / nameFromPrompt marks (marked === false):
+    // below full, all its names and summaries count as free text. Each record keeps its own mark,
+    // so an upgraded reporter doesn't vouch for what an older one sent.
+    const below = level !== 'full';
+    const again = (a, distrust) => {
+      const [x] = shareAgents([distrust ? distrustAgents([a])[0] : a], level);
       return x && { ...x, subagents: x.subagents.map((s) => ({ ...s })), machine: m.name, remote: true, share: level };
     };
-    m.agents = m.agents.map(again).filter(Boolean);
-    for (const [k, evs] of m.events) m.events.set(k, shareEvents(markEvents(evs), level));
+    const evsAgain = (evs, distrust) => shareEvents(distrust ? distrustEvents(evs) : evs, level);
+    const live = below && m.marked === false;
+    m.agents = m.agents.map((a) => again(a, live)).filter(Boolean);
+    for (const [k, evs] of m.events) m.events.set(k, evsAgain(evs, live));
+    if (below) m.marked = true;
     m.others = shareOthers(m.others, level).map((o) => ({ ...o, machine: m.name }));
     for (const [k, x] of m.archive) {
-      const agent = again(x.agent);
+      const distrust = below && x.marked === false;
+      const agent = again(x.agent, distrust);
       if (!agent) { m.archive.delete(k); continue; }
-      m.archive.set(k, { ...x, agent, events: Object.fromEntries(Object.entries(x.events).map(([ek, evs]) => [ek, shareEvents(markEvents(evs), level)])) });
+      m.archive.set(k, {
+        ...x, agent, marked: below ? true : x.marked,
+        events: Object.fromEntries(Object.entries(x.events).map(([ek, evs]) => [ek, evsAgain(evs, distrust)])),
+      });
     }
     m.share = level;
     this.dirty = true;
@@ -231,7 +245,7 @@ export class Hub extends EventEmitter {
     m.archive.delete(a.key);
     m.archive.set(a.key, {
       agent: { ...a, live: false, status: 'offline', now: { verb: 'Ended', since: a.lastAt || now } },
-      events, endedAt: now,
+      events, endedAt: now, marked: m.marked !== false,
     });
     while (m.archive.size > MAX_ARCHIVE) m.archive.delete(m.archive.keys().next().value);
     this.dirty = true;
@@ -263,7 +277,7 @@ export class Hub extends EventEmitter {
       v: 1, savedAt: Date.now(),
       machines: [...this.machines.values()].map((m) => ({
         name: m.name, host: m.host, version: m.version, share: m.share, lastSeen: m.lastSeen, connectedAt: m.connectedAt,
-        agents: m.agents, others: m.others, events: [...m.events], archive: [...m.archive],
+        agents: m.agents, others: m.others, events: [...m.events], archive: [...m.archive], marked: m.marked !== false,
       })),
     };
     const file = path.join(this.dataDir, STATE_FILE);
@@ -294,26 +308,33 @@ export class Hub extends EventEmitter {
       const level = minLevel(s.share, levelOf(this.levelFor?.(s.name)) || s.share);
       const prefix = `${s.name}:`;
       const mine = (k) => typeof k === 'string' && k.startsWith(prefix);
-      // Stored at full from an old reporter, restored lower: mark it as ingest() would have.
-      const legacy = level !== 'full' && versionBelow(String(s.version ?? ''), MIN_REPORTER);
-      const restore = (list) => shareAgents(Array.isArray(list) ? (legacy ? distrustAgents(list) : list) : [], level)
+      // Restored below full, a record an old reporter sent at full (marked false) is treated as
+      // free text, as lowerLevel() does. Anything not explicitly marked counts as unmarked.
+      const below = level !== 'full';
+      const restore = (list, distrust) => shareAgents(Array.isArray(list) ? (distrust ? distrustAgents(list) : list) : [], level)
         .filter((a) => mine(a.key))
         .map((a) => ({ ...a, subagents: a.subagents.filter((x) => mine(x.key)), machine: s.name, remote: true, share: level }));
-      const eventsOf = (pairs) => new Map((Array.isArray(pairs) ? pairs : [])
-        .filter((p) => Array.isArray(p) && mine(p[0])).map(([k, evs]) => [k, shareEvents(legacy ? distrustEvents(evs) : evs, level).slice(-MAX_EVENTS)]));
+      const eventsOf = (pairs, distrust) => new Map((Array.isArray(pairs) ? pairs : [])
+        .filter((p) => Array.isArray(p) && mine(p[0])).map(([k, evs]) => [k, shareEvents(distrust ? distrustEvents(evs) : evs, level).slice(-MAX_EVENTS)]));
+      const liveDistrust = below && s.marked !== true;
       const m = {
         name: s.name, instance: null, seq: -1, online: false, share: level,
         host: String(s.host ?? '').slice(0, 100), version: String(s.version ?? '').slice(0, 30),
         lastSeen: Number(s.lastSeen) || 0, connectedAt: Number(s.connectedAt) || 0,
-        agents: restore(s.agents), others: [], events: eventsOf(s.events), archive: new Map(),
+        agents: restore(s.agents, liveDistrust), others: [], events: eventsOf(s.events, liveDistrust), archive: new Map(),
+        marked: below || s.marked === true,
       };
       m.keys = new Set(m.agents.flatMap((a) => [a.key, ...a.subagents.map((x) => x.key)]));
       for (const p of Array.isArray(s.archive) ? s.archive.slice(-MAX_ARCHIVE) : []) {
         if (!Array.isArray(p) || !mine(p[0]) || !isObj(p[1])) continue;
-        const [agent] = restore([p[1].agent]);
+        const distrust = below && p[1].marked !== true;
+        const [agent] = restore([p[1].agent], distrust);
         const endedAt = Number(p[1].endedAt) || 0;
         if (!agent || now - endedAt > this.retainMs) continue;
-        m.archive.set(p[0], { agent, endedAt, events: Object.fromEntries([...eventsOf(Object.entries(isObj(p[1].events) ? p[1].events : {}))]) });
+        m.archive.set(p[0], {
+          agent, endedAt, marked: below || p[1].marked === true,
+          events: Object.fromEntries([...eventsOf(Object.entries(isObj(p[1].events) ? p[1].events : {}), distrust)]),
+        });
       }
       if (now - m.lastSeen < this.retainMs) this.machines.set(m.name, m);
     }
