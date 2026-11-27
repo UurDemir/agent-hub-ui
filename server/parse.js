@@ -2,6 +2,7 @@
 // UI events, and keeps the running per-session state the dashboard needs.
 import fs from 'node:fs';
 import path from 'node:path';
+import { redact } from './projects.js';
 
 const MAX_EVENTS = 400;
 
@@ -87,7 +88,7 @@ function toolSummary(name, input) {
       return base(input.file_path || input.notebook_path);
     case 'Grep': return `"${input.pattern}"${input.path ? ' in ' + base(input.path) : ''}`;
     case 'Glob': return input.pattern;
-    case 'WebFetch': try { return new URL(input.url).host; } catch { return input.url; }
+    case 'WebFetch': try { return new URL(input.url).host; } catch { return ''; }
     case 'WebSearch': return input.query;
     case 'Agent': case 'Task': return [input.description, input.subagent_type].filter(Boolean).join(' · ');
     case 'TodoWrite': return `${(input.todos || []).length} todos`;
@@ -96,8 +97,27 @@ function toolSummary(name, input) {
     case 'SubagentHandback': return 'Final report';
     case 'StructuredOutput': return 'Structured result';
   }
-  const v = Object.values(input).find((x) => typeof x === 'string');
+  return null; // no summary written for this tool: see freeSummary()
+}
+
+// For tools without a summary of their own (MCP tools and the rest): the first text argument.
+// That can be anything (a message, a question, a query), so the event is marked freeText and
+// share.js only sends such a summary at the full level, like the arguments themselves.
+// Arguments named like a secret are never used for a summary.
+export const SECRET_KEY = /env|header|cookie|secret|token|passw|api[_-]?key|auth|credential/i;
+export function freeSummary(input) {
+  if (typeof input === 'string') return firstLine(input); // a freeform tool's raw input
+  const v = Object.entries(input && typeof input === 'object' ? input : {})
+    .find(([k, x]) => typeof x === 'string' && !SECRET_KEY.test(k))?.[1];
   return firstLine(v);
+}
+
+// summary + freeText for a tool event, from a collector's own toolSummary (null: none for this tool).
+// Summaries go through redact(): a command's first line can carry a token (curl -H "Authorization: …").
+export function summaryFields(own, input) {
+  if (own !== null) return { summary: clip(redact(own ?? ''), 180) };
+  const text = freeSummary(input);
+  return text ? { summary: clip(redact(text), 180), freeText: true } : { summary: '' };
 }
 
 function toolDetail(name, input) {
@@ -235,7 +255,7 @@ export class Transcript {
         const cat = toolCategory(c.name);
         const e = {
           kind: 'tool', toolId: c.id, name: c.name, label: toolLabel(c.name), cat,
-          summary: clip(toolSummary(c.name, input), 180), detail: clip(toolDetail(c.name, input), 1500),
+          ...summaryFields(toolSummary(c.name, input), input), detail: clip(toolDetail(c.name, input), 1500),
         };
         this.pending.set(c.id, { ...e, t });
         this.toolCount++;
@@ -336,7 +356,7 @@ export function transcriptCost(tr, rates) {
 export function activity(tr, status, extra = {}) {
   if (status === 'working') {
     const p = [...tr.pending.values()].at(-1);
-    if (p) return { verb: VERB[p.cat], label: p.label, summary: p.summary, cat: p.cat, since: p.t };
+    if (p) return { verb: VERB[p.cat], label: p.label, summary: p.summary, cat: p.cat, since: p.t, ...(p.freeText && { freeText: true }) };
     const ph = tr.phase;
     if (ph?.kind === 'thinking') return { verb: 'Thinking', since: ph.t };
     if (ph?.kind === 'writing') return { verb: 'Writing', summary: tr.lastSay?.text, since: ph.t };

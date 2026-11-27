@@ -148,6 +148,54 @@ test('a reporter sends only what its sharing level allows, and the hub shows it 
   assert.match(pc.log, /Reporting this machine's agents to http:\/\/127\.0\.0\.1:\d+ \(sharing: metadata\)/);
 });
 
+test('a hub that caps a full reporter at activity drops prompt-made names and free-text summaries', async () => {
+  const hubHome = path.join(tmp, 'cap-hub-claude');
+  const pcHome = path.join(tmp, 'cap-pc-claude');
+  fs.mkdirSync(hubHome);
+  const project = path.join(pcHome, 'projects', '-home-dev-cap-app');
+  fs.mkdirSync(project, { recursive: true });
+  const t = (s) => new Date(Date.now() - 60e3 + s * 1000).toISOString();
+  const records = [ // no ai-title: the session is named after its prompt
+    { type: 'user', timestamp: t(1), uuid: 'u1', cwd: '/home/dev/cap-app', message: { role: 'user', content: 'Tell the team the launch slips' } },
+    { type: 'assistant', timestamp: t(2), uuid: 'a1', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 },
+      content: [{ type: 'tool_use', id: 't1', name: 'mcp__slack__post_message', input: { text: 'Launch moves to May', channel: 'C1' } },
+        { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/home/dev/cap-app/plan.md' } }] } },
+    { type: 'last-prompt', lastPrompt: 'Tell the team the launch slips' },
+  ];
+  fs.writeFileSync(path.join(project, '22222222-2222-3333-4444-555555555555.jsonl'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const { key, entry } = newMachineKey('capped-pc');
+  const keys = path.join(tmp, 'cap-keys.json');
+  fs.writeFileSync(keys, JSON.stringify({ machines: [{ ...entry, share: 'activity' }] }));
+
+  const hub = start({ CLAUDE_CONFIG_DIR: hubHome, PORT: '0', AGENT_HUB_HUB: '1', AGENT_HUB_KEYS: keys, AGENT_HUB_INGEST_PORT: '0', AGENT_HUB_INGEST_HOST: '127.0.0.1' });
+  const ports = await waitFor(() => {
+    const ingest = /Hub ingest listening at http:\/\/127\.0\.0\.1:(\d+)/.exec(hub.log)?.[1];
+    const web = /Agent Hub running at http:\/\/127\.0\.0\.1:(\d+)/.exec(hub.log)?.[1];
+    return ingest && web && { ingest, web };
+  }, `the hub to start\n${hub.log}`);
+  const pc = start({
+    CLAUDE_CONFIG_DIR: pcHome, AGENT_HUB_HEADLESS: '1', AGENT_HUB_SHARE: 'full',
+    AGENT_HUB_REPORT_TO: `http://127.0.0.1:${ports.ingest}`, AGENT_HUB_REPORT_KEY: key,
+  });
+  const d = await waitFor(async () => {
+    const r = await (await fetch(`http://127.0.0.1:${ports.web}/api/agents`)).json();
+    return r.agents.some((a) => a.remote) && r;
+  }, `the capped reporter's agent on the hub\n${pc.log}\n${hub.log}`);
+  const a = d.agents.find((x) => x.remote);
+  assert.equal(a.share, 'activity');
+  assert.equal(a.name, 'cap-app', 'the prompt-made name is replaced');
+  const init = await streamInit(ports.web);
+  const tools = init.events[a.key].filter((e) => e.kind === 'tool');
+  assert.equal(tools.find((e) => e.name === 'Read').summary, 'plan.md', 'a summary written for the tool stays');
+  assert.equal(tools.find((e) => e.name === 'mcp__slack__post_message').summary, undefined, 'a free-text summary is dropped');
+  const all = JSON.stringify(init);
+  for (const secret of ['launch slips', 'Launch moves', 'freeText', 'nameFromPrompt']) {
+    assert.equal(all.includes(secret), false, `"${secret}" reached the hub's dashboard`);
+  }
+  pc.kill();
+  hub.kill();
+});
+
 test('a reporter pointed at a dashboard port says so instead of blaming the key', async () => {
   // What a hub dashboard with --viewer-password answers: a plain-text login prompt.
   const dashboard = http.createServer((req, res) => {

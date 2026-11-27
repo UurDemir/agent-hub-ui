@@ -16,7 +16,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
-import { Tail, activity, clip, toolLabel } from './parse.js';
+import { SECRET_KEY, Tail, activity, clip, summaryFields, toolLabel } from './parse.js';
 
 const env = process.env;
 const HOME = env.OPENCLAW_HOME || os.homedir();
@@ -56,14 +56,11 @@ const mcpName = (name) => (!name.startsWith('mcp__') && /^[^_].*__./.test(name) 
 export const openclawCategory = (name) => (mcpName(name).startsWith('mcp__') ? 'mcp' : CATEGORY[name] || 'other');
 
 // Arguments can carry secrets (exec's env, a browser's headers): those keys never leave the collector.
-const SECRET_KEY = /env|header|cookie|secret|token|passw|api[_-]?key|auth|credential/i;
 const scrub = (v, depth = 0) => {
   if (Array.isArray(v)) return depth > 6 ? [] : v.map((x) => scrub(x, depth + 1));
   if (!v || typeof v !== 'object') return v;
   return depth > 6 ? {} : Object.fromEntries(Object.entries(v).filter(([k]) => !SECRET_KEY.test(k)).map(([k, x]) => [k, scrub(x, depth + 1)]));
 };
-// Summaries are shared from the activity level, so other tools only get one of these plain fields.
-const SAFE_SUMMARY = ['path', 'pattern', 'query', 'action'];
 const host = (u) => { try { return new URL(u).host; } catch { return ''; } };
 const patchFiles = (patch) => [...String(patch).matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map((m) => m[1].trim());
 
@@ -80,12 +77,10 @@ function toolSummary(name, a) {
     case 'web_fetch': return host(a.url);
     case 'browser': return [a.action, host(a.url)].filter(Boolean).join(' ');
     case 'sessions_spawn': return [a.label, a.agentId].filter(Boolean).join(' · ') || 'Subagent'; // the task is a prompt
-    case 'sessions_send': return 'Message to a session';
-    case 'message': return 'Sending a message';
-    case 'ask_user': return 'Question';
   }
-  const k = SAFE_SUMMARY.find((x) => typeof a[x] === 'string');
-  return k ? firstLine(k === 'path' ? base(a[k]) : a[k]) : '';
+  // Other tools (MCP, messages, questions…) get their first text argument, marked freeText so a hub
+  // only gets it at the full level (summaryFields in parse.js).
+  return null;
 }
 
 function toolDetail(name, a) {
@@ -221,7 +216,7 @@ export class OpenClawTranscript {
     const cat = openclawCategory(name);
     const e = {
       kind: 'tool', toolId: id, name: full, label: toolLabel(full), cat,
-      summary: clip(toolSummary(name, args), 180), detail: clip(toolDetail(name, args), 1500),
+      ...summaryFields(toolSummary(name, args), scrub(args)), detail: clip(toolDetail(name, args), 1500),
     };
     this.pending.set(id, { ...e, t });
     this.toolCount++;

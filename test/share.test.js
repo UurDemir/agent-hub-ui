@@ -102,5 +102,18 @@ test('a name made from a prompt stays on this machine below full', () => {
   assert.equal(shareAgents([a], 'activity')[0].name, 'demo');
   assert.equal(shareAgents([a], 'full')[0].name, 'fix the login bug');
   assert.equal(shareAgents([{ ...a, nameFromPrompt: false }], 'activity')[0].name, 'fix the login bug');
-  assert.equal('nameFromPrompt' in shareAgents([a], 'full')[0], false, 'the flag itself is not sent');
+  assert.equal('nameFromPrompt' in shareAgents([a], 'activity')[0], false, 'below full the flag is not sent…');
+  assert.equal(shareAgents([a], 'full')[0].nameFromPrompt, true, '…at full it is, so a hub that lowers the level can act on it');
+  const relayed = shareAgents([a], 'full');
+  assert.equal(shareAgents(relayed, 'activity')[0].name, 'demo', 'a hub capping a full reporter at activity drops the name');
+});
+
+test('a hub that lowers a full reporter still drops free-text summaries', () => {
+  const tool = { kind: 'tool', id: 'e1', t: 1, toolId: 't1', name: 'mcp__slack__post', label: 'slack · post', cat: 'mcp', summary: 'the launch slips to May', detail: '{}', freeText: true };
+  const relayed = shareEvents([tool], 'full');
+  assert.equal(relayed[0].freeText, true);
+  assert.equal(shareEvents(relayed, 'activity')[0].summary, undefined);
+  const now = { verb: 'Calling', label: 'slack · post', summary: 'the launch slips to May', cat: 'mcp', since: 1, freeText: true };
+  const agent = { key: 'k', sessionId: 'abcdef123456', project: 'demo', name: 'demo', status: 'working', now, subagents: [] };
+  assert.equal(shareAgents(shareAgents([agent], 'full'), 'activity')[0].now.summary, undefined);
 });
